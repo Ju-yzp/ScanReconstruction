@@ -5,38 +5,35 @@
 
 #include <vector>
 
-namespace FernRelocLib
-{
-	class PoseDatabase
-	{
-	public:
-		struct PoseInScene
-		{
-			PoseInScene(void) {}
-			PoseInScene(const Sophus::SE3f & _pose, int _sceneIdx) : pose(_pose), sceneIdx(_sceneIdx) {}
-			Sophus::SE3f pose;
-			int sceneIdx;
-		};
+namespace FernRelocLib {
+class PoseDatabase {
+public:
+    struct PoseInScene {
+        PoseInScene(void) {}
+        PoseInScene(const Sophus::SE3f& _pose, int _sceneIdx) : pose(_pose), sceneIdx(_sceneIdx) {}
+        Sophus::SE3f pose;
+        int sceneIdx;
+    };
 
-		PoseDatabase(void);
+    PoseDatabase(void);
 
-		~PoseDatabase(void);
+    ~PoseDatabase(void);
 
-		void storePose(int id, const Sophus::SE3f & pose, int sceneId);
-        
-		int numPoses(void) const { return (int)mPoses.size(); }
+    void storePose(int id, const Sophus::SE3f& pose, int sceneId);
 
-		const PoseInScene & retrievePose(int id) const { return mPoses[id]; }
+    int numPoses(void) const { return (int)mPoses.size(); }
 
-		PoseInScene retrieveWAPose(int k, int ids[], float weights[]) const;
+    const PoseInScene& retrievePose(int id) const { return mPoses[id]; }
 
-		void saveToFile(const std::string &fileName);
+    PoseInScene retrieveWAPose(int k, int ids[], float weights[]) const;
 
-		void loadFromFile(const std::string &fileName);
+    void saveToFile(const std::string& fileName);
 
-	private:
-		std::vector<PoseInScene> mPoses;
-	};
-}
+    void loadFromFile(const std::string& fileName);
+
+private:
+    std::vector<PoseInScene> mPoses;
+};
+}  // namespace FernRelocLib
 
 #endif

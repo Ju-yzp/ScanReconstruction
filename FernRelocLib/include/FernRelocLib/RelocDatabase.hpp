@@ -2,37 +2,36 @@
 #ifndef RELOC_DATABASE_HPP_
 #define RELOC_DATABASE_HPP_
 
-#include <vector>
 #include <string>
+#include <vector>
 
-namespace FernRelocLib
-{
-	class RelocDatabase
-	{
-	public:
-		RelocDatabase(int codeLength, int codeFragmentDim);
-		
-		~RelocDatabase(void);
+namespace FernRelocLib {
+class RelocDatabase {
+public:
+    RelocDatabase(int codeLength, int codeFragmentDim);
 
-		/** @return Number of valid similar entries that were found. Mostly
-			relevant in case of an empty database.
-		*/
-		int findMostSimilar(const char *codeFragments, int nearestNeighbours[], float distances[], int k);
+    ~RelocDatabase(void);
 
-		/** @return ID of newly added entry */
-		int addEntry(const char *codeFragments);
+    /** @return Number of valid similar entries that were found. Mostly
+            relevant in case of an empty database.
+    */
+    int findMostSimilar(
+        const char* codeFragments, int nearestNeighbours[], float distances[], int k);
 
-		void saveToFile(const std::string &framesFileName) const;
+    /** @return ID of newly added entry */
+    int addEntry(const char* codeFragments);
 
-		void loadFromFile(const std::string &filename);
+    void saveToFile(const std::string& framesFileName) const;
 
-	private:
-		int mTotalEntries;
+    void loadFromFile(const std::string& filename);
 
-		int mCodeLength, mCodeFragmentDim;
-		 
-		std::vector<int> *mIds;
-	};
-}
+private:
+    int mTotalEntries;
+
+    int mCodeLength, mCodeFragmentDim;
+
+    std::vector<int>* mIds;
+};
+}  // namespace FernRelocLib
 
 #endif
