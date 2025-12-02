@@ -7,24 +7,13 @@
 // cpp
 #include <climits>
 #include <cmath>
-#include <cstdint>
+#include <memory>
 #include <optional>
 #include <set>
 
-namespace SufaceRestruction {
-// 一个体素块边长/一个体素边长
-constexpr int SDF_BLOCK_SIZE = 8;
+#include <settings.h>
 
-// 一个体素块所容纳的体素个数
-constexpr int SDF_BLOCK_SIZE3 = 512;
-
-// 哈希表掩码
-constexpr uint32_t SDF_HASH_MASK = 0xfffff;
-
-constexpr uint32_t SDF_BUCKET_NUM = 0x100000;
-
-constexpr uint32_t SDF_EXCESS_LIST_SIZE = 0x20000;
-
+namespace surface_restruction {
 // 哈希表实体
 struct HashEntry {
     // 指向的体素块的坐标
@@ -43,28 +32,22 @@ struct Voxel {
     float w_depth = 0;
 };
 
-struct SceneParams {
-    // 截断距离
-    float mu;
-
-    // 最大权重
-    float maxWeight;
-
-    // 一个体素的边长，其实就是建图的分辨率
-    float voxelSize;
-};
-
 // TODO：当前版本不支持动态内存
 class Scene {
 public:
-    Scene(const SceneParams& sceneParams) : sceneParams_(sceneParams) {
-        hashEntries_ = new HashEntry[SDF_BUCKET_NUM + SDF_EXCESS_LIST_SIZE];
-        voxel_ = new Voxel[(SDF_BUCKET_NUM + SDF_EXCESS_LIST_SIZE) * SDF_BLOCK_SIZE3];
+    Scene(std::shared_ptr<Settings> settings) {
+        if (!settings_) settings_ = settings;
+
+        hashEntries_ = new HashEntry[settings_->sdf_bucket_num + settings_->sdf_excess_list_size];
+        voxel_ = new Voxel
+            [(settings_->sdf_bucket_num + settings_->sdf_excess_list_size) *
+             settings_->sdf_block_size3];
 #pragma omp parallel for
-        for (int i = 0; i < (SDF_BUCKET_NUM + SDF_EXCESS_LIST_SIZE); ++i) hashEntries_[i].ptr = i;
-        freeExcessEntries_.resize(SDF_EXCESS_LIST_SIZE);
-        for (int i = 0; i < SDF_EXCESS_LIST_SIZE; ++i)
-            freeExcessEntries_[i] = SDF_BUCKET_NUM + i + 1;
+        for (int i = 0; i < (settings_->sdf_bucket_num + settings_->sdf_excess_list_size); ++i)
+            hashEntries_[i].ptr = i;
+        freeExcessEntries_.resize(settings_->sdf_excess_list_size);
+        for (int i = 0; i < settings_->sdf_excess_list_size; ++i)
+            freeExcessEntries_[i] = settings_->sdf_bucket_num + i + 1;
     }
 
     ~Scene() {
@@ -76,11 +59,11 @@ public:
     static int getHashIndex(Eigen::Vector3i voxelBlockPos) {
         return (((uint)voxelBlockPos(0) * 73856093u) ^ ((uint)voxelBlockPos(1) * 19349669u) ^
                 ((uint)voxelBlockPos(2) * 83492791u)) &
-               (uint)SDF_HASH_MASK;
+               (uint)settings_->sdf_hash_mask;
     }
 
     // 获取体素块地址
-    Voxel* get_voxelBolck(int id) { return voxel_ + id * SDF_BLOCK_SIZE3; }
+    Voxel* get_voxelBolck(int id) { return voxel_ + id * settings_->sdf_block_size3; }
 
     // 清除上一帧的可见体素块索引并交换上一帧和当前帧的数据指针以及其他数据
     void swapVisibleList() {
@@ -104,7 +87,7 @@ public:
         return &hashEntries_[id];
     }
 
-    SceneParams get_sceneParams() const { return sceneParams_; }
+    Settings get_settings() const { return *settings_; }
 
     const std::set<int>& get_constLastFrameVisibleVoxelBlockList() const {
         return lastFrametVisibleVoxelBlockList_;
@@ -121,7 +104,7 @@ public:
     }
 
     void freeExcessEntry(int id) {
-        if (id - SDF_BUCKET_NUM + 1 >= 0) {
+        if (id - settings_->sdf_bucket_num + 1 >= 0) {
             freeExcessEntries_.push_back(id);
             hashEntries_[id].isUsed = false;
             hashEntries_[id].offset = -1;
@@ -140,12 +123,12 @@ private:
 
     std::vector<int> freeExcessEntries_;
 
-    SceneParams sceneParams_;
+    static std::shared_ptr<Settings> settings_;
 
     std::set<int> lastFrametVisibleVoxelBlockList_;
 
     std::set<int> currentFrameVisibleVoxelBlockIdList_;
 };
-}  // namespace SufaceRestruction
+}  // namespace surface_restruction
 
 #endif  // SCENE_H_

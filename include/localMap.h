@@ -4,10 +4,14 @@
 #include <scene.h>
 #include <memory>
 
-namespace SufaceRestruction {
+#include <settings.h>
+
+namespace surface_restruction {
 class LocalMap {
 public:
-    LocalMap(Eigen::Matrix4f estimatedGlobalPose);
+    LocalMap(Eigen::Matrix4f estimatedGlobalPoseconst, const std::shared_ptr<Settings> settings);
+
+    std::shared_ptr<Scene> get_scene() { return scene_; }
 
 private:
     // 子地图所拥有的场景数据
@@ -16,6 +20,6 @@ private:
     // 子地图在全局坐标系中的位姿估计
     Eigen::Matrix4f estimatedGlobalPose_;
 };
-}  // namespace SufaceRestruction
+}  // namespace surface_restruction
 
 #endif  // LOCAL_MAP_H_

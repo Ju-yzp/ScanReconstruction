@@ -3,9 +3,14 @@
 
 // cpp
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <vector>
 
-namespace SufaceRestruction {
+#include <localMap.h>
+#include <trackingState.h>
+
+namespace surface_restruction {
 
 enum class LocalMapState : uint8_t {
     PRIMARY_LOCAL_MAP = 0,
@@ -19,15 +24,24 @@ enum class LocalMapState : uint8_t {
 struct ActiveMapDescriptor {
     LocalMapState state{LocalMapState::NEW_LOCAL_MAP};
     int id{-1};
+    int trackingAttempts{0};
 };
 
 class LocalMapManager {
 public:
     ActiveMapDescriptor createNewLocalMap(bool isPrimary = false);
 
+    bool isStartNewArea();
+
+    std::optional<int> getPrimaryLocalMapIndex() const;
+
+    void recordTrackingResult(int localMapId, std::shared_ptr<TrackingState> tracking_state);
+
 private:
-    std::vector<ActiveMapDescriptor> localMaps_;
+    std::vector<ActiveMapDescriptor> activeLocalMaps_;
+
+    std::vector<std::shared_ptr<LocalMap>> allLocalMaps_;
 };
-}  // namespace SufaceRestruction
+}  // namespace surface_restruction
 
 #endif  // LOCAL_MAP_MANAGER_H_

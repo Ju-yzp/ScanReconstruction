@@ -64,3 +64,14 @@ target_link_libraries(
 
 # target_link_libraries(test_tracker PUBLIC ${OpenCV_LIBS} ${G2O_LIBRARIES}
 # Eigen3::Eigen Sophus::Sophus tracker)
+
+file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.cxx")
+
+add_library(surface_retruction ${SOURCES})
+target_include_directories(
+  surface_retruction
+  PUBLIC ${PROJECT_SOURCE_DIR}/include ${Eigen3_INCLUDE_DIRS}
+         ${OpenCV_INCLUDE_DIRS} ${G2O_INCLUDE_DIRS})
+
+target_link_libraries(surface_retruction PUBLIC ${OpenCV_LIBS} ${G2O_LIBRARIES}
+                                                Eigen3::Eigen Sophus::Sophus)
