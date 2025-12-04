@@ -1,10 +1,12 @@
 #include <calibrationParams.h>
 #include <pixelUtils.h>
 #include <settings.h>
+#include <tracker.h>
 #include <trackingState.h>
 #include <view.h>
 
 // cpp
+#include <Eigen/Geometry>
 #include <memory>
 
 // opencv
@@ -20,6 +22,14 @@ int main() {
     int rows = orginDepth.rows;
     int cols = orginDepth.cols;
 
+    Eigen::Quaternionf q1(-0.3266, 0.6583, 0.6112, -0.2938), q2(-0.3045, 0.6623, 0.6202, -0.2898);
+
+    Eigen::Matrix4f t1 = Eigen::Matrix4f::Identity(), t2 = Eigen::Matrix4f::Identity();
+    t1.col(3) << 1.3434, 0.6271, 1.6606, 1.0;
+    t2.col(3) << 1.3041, 0.6256, 1.6170, 1.0;
+    t1.block(0, 0, 3, 3) = q1.matrix();
+    t2.block(0, 0, 3, 3) = q2.matrix();
+
     RGBDCalibrationParams calibrationParams;
     calibrationParams.scale = 5000.0f;
 
@@ -33,14 +43,17 @@ int main() {
         orginDepth.rows, orginDepth.cols, settings->orientation_weight,
         settings->translation_weight, settings->regenerate_pointcloud_threahold);
 
-    auto pointsMap = trackingState->get_pointcloud();
+    auto pointsMap = trackingState->get_pointclouds();
 
     Intrinsic depthIntrinsics(Eigen::Vector4f{525.f, 525.f, 310.5f, 239.5f});
 
     view->calibrationParams.depth = depthIntrinsics;
+    view->calibrationParams.viewFrustum_max = 2.f;
+    view->calibrationParams.viewFrustum_min = 0.2f;
 
-    Eigen::Matrix3f k_inv = calibrationParams.depth.k_inv;
-
+    Eigen::Matrix3f k_inv = view->calibrationParams.depth.k_inv;
+    trackingState->set_generate_camera_in_localmap(t1.inverse());
+    trackingState->set_current_camera_in_localmap(t1.inverse());
     for (int y{0}; y < rows; ++y) {
         for (int x{0}; x < cols; ++x) {
             Eigen::Vector4f& point = (*pointsMap)[x + y * cols];
@@ -48,19 +61,25 @@ int main() {
 
             point(3) = -1.f;
             if (depth_measure < 1e-5) continue;
-            point << depth_measure * Eigen::Vector3f(x, y, 1.0f), 1.0f;
+            point << depth_measure * (k_inv * Eigen::Vector3f(x, y, 1.0f)), 1.0f;
+            point = t1 * point;
         }
     }
 
-    computeNormalMap(rows, cols, trackingState->get_pointcloud(), trackingState->get_normals());
+    computeNormalMap(rows, cols, trackingState->get_pointclouds(), trackingState->get_normals());
 
-    cv::Mat subsmapleDepth;
+    Tracker tracker(
+        settings, settings->nPyramidLevel, settings->maxNLMIteration, settings->minNLMIteration,
+        settings->maxSpaceThreshold, settings->minSpaceThreshold);
 
-    filterSubsampleWithHoles(view->depth, subsmapleDepth, Eigen::Vector2i(rows, cols));
-    cv::namedWindow("depth", cv::WINDOW_AUTOSIZE);
+    orginDepth = cv::imread(
+        "/home/adrewn/surface_reconstruction/data/1305031102.329195.png", cv::IMREAD_UNCHANGED);
+    view->processDepth(orginDepth);
+    tracker.track(view, trackingState);
 
-    cv::imshow("depth", subsmapleDepth);
-
-    cv::waitKey();
+    std::cout << "-------ApproxPose is -------" << std::endl;
+    std::cout << trackingState->get_current_camera_in_localmap().inverse() << std::endl;
+    std::cout << "------Actual Pose is ------" << std::endl;
+    std::cout << t2 << std::endl;
     return 0;
 }

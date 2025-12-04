@@ -44,7 +44,7 @@ file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.cxx")
 # ${G2O_LIBRARIES} Sophus::Sophus # rclcpp::rclcpp #
 # ${visualization_msgs_LIBRARIES} VisualisationEngine)
 
-add_executable(test_tracker test/test_tracker.cpp)
+add_executable(test_tracker test/test_tracker.cpp src/tracker.cpp)
 target_include_directories(
   test_tracker PUBLIC include ${Eigen3_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS}
                       ${G2O_INCLUDE_DIRS} ${visualization_msgs_INCLUDE_DIRS})

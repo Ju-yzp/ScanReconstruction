@@ -55,10 +55,21 @@ struct Settings {
     int nRelocTrials{20};
 
     // 追踪最少有效点
-    int minNVaildPoints{1000};
+    int minNVaildPoints{100};
 
     // LM的lamdba尺度因子
-    float lamdbaScale{7.0f};
+    float lamdbaScale{1.6f};
+
+    // LM最大迭代次数
+    int maxNLMIteration{10};
+
+    // LM最小迭代次数
+    int minNLMIteration{2};
+
+    // 追踪器鲁棒参数
+    float maxSpaceThreshold{0.15f};
+
+    float minSpaceThreshold{0.06f};
 };
 }  // namespace surface_reconstruction
 #endif  // SETTINGS_H_

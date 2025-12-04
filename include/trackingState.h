@@ -41,7 +41,7 @@ public:
         return score > regenerate_pointcloud_threahold_;
     }
 
-    std::shared_ptr<std::vector<Eigen::Vector4f>> get_pointcloud() { return pointclouds_; }
+    std::shared_ptr<std::vector<Eigen::Vector4f>> get_pointclouds() { return pointclouds_; }
 
     std::shared_ptr<std::vector<Eigen::Vector4f>> get_normals() { return normals_; }
 

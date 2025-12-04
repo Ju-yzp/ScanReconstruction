@@ -281,7 +281,7 @@ void generatePointCloudsAndNormals(
     int rows = trackingState->get_height();
     int cols = trackingState->get_width();
 
-    Eigen::Vector4f* pointcloud = trackingState->get_pointcloud()->data();
+    Eigen::Vector4f* pointcloud = trackingState->get_pointclouds()->data();
     Eigen::Vector4f* normal = trackingState->get_normals()->data();
     Eigen::Vector4f* rayPoint = renderState->raycastResult->data();
 

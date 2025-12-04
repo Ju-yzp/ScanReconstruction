@@ -2,6 +2,7 @@
 #define TRACKER_H_
 
 // opencv
+#include <Eigen/Core>
 #include <memory>
 #include <opencv2/opencv.hpp>
 
@@ -17,31 +18,33 @@
 namespace surface_reconstruction {
 class Tracker {
 public:
-    Tracker(int nPyramidLevel, int maxNIteration, int minNIteration);
+    Tracker(
+        std::shared_ptr<Settings> settins, int nPyramidLevel, int maxNIteration, int minNIteration,
+        float maxSpaceThreshold, float minSpaceThreshold);
 
-    void track(std::shared_ptr<View>, std::shared_ptr<TrackingState> trackingState);
+    void track(std::shared_ptr<View> view, std::shared_ptr<TrackingState> trackingState);
 
-private:
     // 获取图像金字塔
-    void prepare(std::shared_ptr<View> view);
+    void prepare(std::shared_ptr<View> view, std::shared_ptr<TrackingState> trackingState);
 
     // 写入追踪质量
     void updateQualityOfTracking();
 
     // 计算深度图像的hessian矩阵和梯度值
     void computeHessianAndGradient(
-        int id, Eigen::Matrix<float, 6, 6>& hessian, Eigen::Vector<float, 6> nabla, float& f,
-        int& nVaildPoints, std::shared_ptr<View> view,
+        int id, Eigen::Matrix<float, 6, 6>& hessian, Eigen::Vector<float, 6>& nabla, float& f,
+        int& nVaildPoints, std::shared_ptr<View> view, Eigen::Matrix4f approxPose,
         std::shared_ptr<TrackingState> trackingState);
 
     // 计算变化量
     void computeDelta(
         Eigen::Matrix<float, 6, 6> hessian, Eigen::Vector<float, 6> nabla,
-        Eigen::Vector<float, 6>& delta);
+        Eigen::Matrix<float, 1, 6>& delta);
 
     // 应用变化量
-    void applyDelta(Eigen::Matrix4f& pose, Eigen::Vector<float, 6> delta);
+    void applyDelta(Eigen::Matrix4f& pose, Eigen::Matrix<float, 1, 6> delta);
 
+private:
     std::vector<cv::Mat> rgbPyramid_;
     std::vector<cv::Mat> depthPyramid_;
 
