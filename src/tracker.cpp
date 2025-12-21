@@ -1,385 +1,254 @@
-// surface_reconstruction
-#include <pixelUtils.h>
 #include <tracker.h>
+
+// tbb
+#include <oneapi/tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#include <tbb/blocked_range2d.h>
+#include <tbb/concurrent_vector.h>
+#include <tbb/global_control.h>
+#include <tbb/info.h>
+#include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
+#include <tbb/task_arena.h>
 
 // eigen
 #include <Eigen/Core>
 
 // cpp
-#include <algorithm>
+#include <utils.h>
+#include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
-// opencv
-#include <memory>
-#include <opencv2/opencv.hpp>
-
-#include <optional>
-
-// pcl
-// #include <pcl/console/time.h>
-// #include <pcl/features/fpfh_omp.h>
-// #include <pcl/features/normal_3d_omp.h>
-// #include <pcl/filters/filter.h>
-// #include <pcl/io/pcd_io.h>
-// #include <pcl/point_types.h>
-// #include <pcl/registration/ia_fpcs.h>
-// #include <pcl/registration/ia_kfpcs.h>
-// #include <pcl/registration/sample_consensus_prerejective.h>
-// #include <pcl/visualization/pcl_visualizer.h>
-// #include <boost/thread/thread.hpp>
-#include <stdexcept>
-#include "trackingState.h"
-
-namespace surface_reconstruction {
-
-// typedef pcl::PointXYZ PointT;
-// typedef pcl::PointCloud<PointT> pointcloud;
-// typedef pcl::PointCloud<pcl::Normal> pointnormal;
-// typedef pcl::PointCloud<pcl::FPFHSignature33> fpfhFeature;
-
-// pointcloud::Ptr vectorToPointCloud(std::shared_ptr<std::vector<Eigen::Vector4f>> input_data) {
-//     pointcloud::Ptr cloud(new pointcloud);
-//     cloud->points.reserve(input_data->size());
-
-//     for (const auto& vec : *input_data) {
-//         if (std::isnan(vec(3))) continue;
-//         PointT p;
-//         p.x = vec[0];
-//         p.y = vec[1];
-//         p.z = vec[2];
-//         cloud->points.push_back(p);
-//     }
-
-//     cloud->width = cloud->points.size();
-//     std::cout << "DEBUG: Cloud size : " << cloud->points.size() << std::endl;
-//     cloud->height = 1;
-//     return cloud;
-// }
-
-// pointcloud::Ptr vectorToPointCloud(const cv::Mat& depth, Intrinsic depthIntrinsics) {
-//     pointcloud::Ptr cloud(new pointcloud);
-//     cloud->points.reserve(depth.rows * depth.cols);
-//     int rows = depth.rows;
-//     int cols = depth.cols;
-//     float* depth_data = (float*)depth.data;
-//     Eigen::Matrix3f k_inv = depthIntrinsics.k_inv;
-
-//     for (int y{0}; y < rows; ++y) {
-//         for (int x{0}; x < cols; ++x) {
-//             float depth_measure = depth_data[y * cols + x];
-//             if (std::isnan(depth_measure)) continue;
-//             Eigen::Vector3f point = k_inv * Eigen::Vector3f(x, y, 1.0f) * depth_measure;
-//             PointT p;
-//             p.x = point[0];
-//             p.y = point[1];
-//             p.z = point[2];
-//             cloud->points.push_back(p);
-//         }
-//     }
-
-//     cloud->width = cloud->points.size();
-//     std::cout << "DEBUG: Cloud size  " << cloud->points.size() << std::endl;
-//     cloud->height = 1;
-//     return cloud;
-// }
-
-// fpfhFeature::Ptr compute_fpfh_feature(pointcloud::Ptr input_cloud) {
-//     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-
-//     pointnormal::Ptr normals(new pointnormal);
-//     pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> n;
-//     n.setInputCloud(input_cloud);
-//     n.setNumberOfThreads(8);
-//     n.setSearchMethod(tree);
-//     n.setKSearch(10);
-//     n.compute(*normals);
-
-//     fpfhFeature::Ptr fpfh(new fpfhFeature);
-//     pcl::FPFHEstimationOMP<pcl::PointXYZ, pcl::Normal, pcl::FPFHSignature33> fest;
-//     fest.setNumberOfThreads(8);
-//     fest.setInputCloud(input_cloud);
-//     fest.setInputNormals(normals);
-//     fest.setSearchMethod(tree);
-//     fest.setKSearch(10);
-//     fest.compute(*fpfh);
-
-//     return fpfh;
-// }
-
-// std::optional<Eigen::Matrix4f> ransac_registration(
-//     pointcloud::Ptr source, pointcloud::Ptr target, fpfhFeature::Ptr source_fpfh,
-//     fpfhFeature::Ptr target_fpfh) {
-//     pcl::SampleConsensusPrerejective<PointT, PointT, pcl::FPFHSignature33> r_sac;
-//     pointcloud::Ptr aligned(new pointcloud);
-
-//     r_sac.setInputSource(source);
-//     r_sac.setInputTarget(target);
-//     r_sac.setSourceFeatures(source_fpfh);
-//     r_sac.setTargetFeatures(target_fpfh);
-//     r_sac.setCorrespondenceRandomness(3);
-//     r_sac.setInlierFraction(0.2f);
-//     r_sac.setNumberOfSamples(10);
-//     r_sac.setSimilarityThreshold(0.7f);
-//     r_sac.setMaxCorrespondenceDistance(0.24f);
-//     r_sac.setMaximumIterations(4000);
-
-//     pcl::console::TicToc time;
-//     time.tic();
-
-//     r_sac.align(*aligned);
-//     if (!r_sac.hasConverged())
-//         return std::nullopt;
-//     else
-//         return r_sac.getFinalTransformation();
-// }
-
 Tracker::Tracker(
-    std::shared_ptr<Settings> settins, int nPyramidLevel, int maxNIteration, int minNIteration,
-    float maxSpaceThreshold, float minSpaceThreshold)
-    : settings_(settins), nPyramidLevel_(nPyramidLevel) {
-    rgbPyramid_.resize(nPyramidLevel);
-    depthPyramid_.resize(nPyramidLevel);
-    rgbIntrinsicsPyramid_.reserve(nPyramidLevel);
-    depthIntrinsicsPyramid_.reserve(nPyramidLevel);
-    pointcloudPyramid_.resize(nPyramidLevel);
-    normalPyramid_.resize(nPyramidLevel);
-    nIterationPyramid_.resize(nPyramidLevel);
-    spaceThresholds_.reserve(nPyramidLevel);
+    cv::Mat k, cv::Mat d, cv::Size2i imgSize, int max_num_threads, int max_num_iterations,
+    float initial_lamdba, float lamdba_scale, float depth_scale, float space_threshold)
+    : max_num_iterations_(max_num_iterations),
+      initial_lamdba_(initial_lamdba),
+      lamdba_scale_(lamdba_scale),
+      depth_scale_(depth_scale),
+      space_threshold_(space_threshold) {
+    cv::Mat new_k = cv::getOptimalNewCameraMatrix(k, d, imgSize, 0, imgSize);
+    height_ = imgSize.height;
+    width_ = imgSize.width;
+    k_ = Eigen::Matrix3f::Identity();
+    k_(0, 0) = (float)k.at<double>(0, 0);
+    k_(1, 1) = (float)k.at<double>(1, 1);
+    k_(0, 2) = (float)k.at<double>(0, 2);
+    k_(1, 2) = (float)k.at<double>(1, 2);
+    cv::initUndistortRectifyMap(
+        k, d, cv::Mat::eye(3, 3, CV_64F), new_k, imgSize, CV_32FC1, mapX_, mapY_);
 
-    float iterStep = (float)(maxNIteration - minNIteration) / (float)(nPyramidLevel - 1);
-    float spaceStep = (maxSpaceThreshold - minSpaceThreshold) / (float)(nPyramidLevel - 1);
-    for (int i{0}; i < nPyramidLevel; ++i) {
-        nIterationPyramid_[i] = maxNIteration - iterStep * i;
-        spaceThresholds_[i] = maxSpaceThreshold - spaceStep * i;
-    }
+    rayMap_.resize((size_t)(width_ * height_), Eigen::Vector3f::Zero());
+
+    global_pose_ = Eigen::Matrix4f::Identity();
+
+    Eigen::Matrix3f inv_k = k_.inverse();
+    for (int y = 0; y < height_; ++y)
+        for (int x = 0; x < width_; ++x)
+            rayMap_[(size_t)(y * width_ + x)] = inv_k * Eigen::Vector3f(float(x), float(y), 1.0f);
+
+    static const auto tbb_control_settings = tbb::global_control(
+        tbb::global_control::max_allowed_parallelism, static_cast<size_t>(max_num_threads));
 }
 
-void Tracker::track(std::shared_ptr<View> view, std::shared_ptr<TrackingState> trackingState) {
-    prepare(view, trackingState);
+Eigen::Matrix4f Tracker::track(View& view) {
+    float f = std::numeric_limits<float>::infinity();
+    Eigen::Matrix4f pose_good = global_pose_;
+    Eigen::Matrix4f pose_old = pose_good;
+    float lamdba{initial_lamdba_};
 
-    Eigen::Matrix<float, 6, 6> hessian_good = Eigen::Matrix<float, 6, 6>::Zero();
-    Eigen::Vector<float, 6> nabla_good = Eigen::Vector<float, 6>::Zero();
-    float f_good;
-    int nVaildPoints_good{0};
+    for (int i{0}; i < max_num_iterations_; ++i) {
+        auto [local_hessian, local_nabla, local_f] =
+            buildLinearSystem(view, pose_good, global_pose_, k_, width_, height_);
 
-    bool coarseRgistration{false};
-
-    for (int level = nPyramidLevel_ - 1; level >= 0; --level) {
-        // 相机到世界坐标系
-        Eigen::Matrix4f approxPose = trackingState->get_current_camera_in_localmap().inverse();
-        Eigen::Matrix4f old_pose = trackingState->get_current_camera_in_localmap().inverse();
-        float old_f = std::numeric_limits<float>::infinity();
-        float lamdba{1.0f};
-
-        // if (!coarseRgistration) {
-        //     coarseRgistration = true;
-        //     pointcloud::Ptr source = vectorToPointCloud(pointcloudPyramid_[level]);
-        //     pointcloud::Ptr target =
-        //         vectorToPointCloud(depthPyramid_[level], depthIntrinsicsPyramid_[level]);
-        //     if (target->empty() || source->empty()) throw std::runtime_error("pointcloud
-        //     isempty"); fpfhFeature::Ptr source_fpfh = compute_fpfh_feature(source);
-        //     fpfhFeature::Ptr target_fpfh = compute_fpfh_feature(target);
-        //     auto pose = ransac_registration(source, target, source_fpfh, target_fpfh);
-        //     if (pose.has_value()) {
-        //         approxPose = pose.value().inverse();
-        //         std::cout << "Succefully" << std::endl;
-        //         if (pose.has_value()) std::cout << pose.value().inverse() << std::endl;
-        //     } else
-        //         std::cout << "Solve Failed" << std::endl;
-        //     coarseRgistration = true;
-        // }
-
-        for (int i = 0; i < nIterationPyramid_[level]; ++i) {
-            float local_f = {0.0f};
-            Eigen::Matrix<float, 6, 6> local_hessian = Eigen::Matrix<float, 6, 6>::Zero();
-            Eigen::Vector<float, 6> local_nabla = Eigen::Vector<float, 6>::Zero();
-            int local_nVaildPoints{0};
-
-            computeHessianAndGradient(
-                level, local_hessian, local_nabla, local_f, local_nVaildPoints, view, approxPose,
-                trackingState);
-
-            if (local_nVaildPoints > settings_->minNVaildPoints) {
-                local_hessian /= (float)local_nVaildPoints;
-                local_nabla /= (float)local_nVaildPoints;
-                local_f /= (float)local_nVaildPoints;
-            } else
-                local_f = std::numeric_limits<float>::infinity();
-
-            if (local_nVaildPoints < 1 || local_f >= old_f) {
-                trackingState->set_current_camera_in_localmap(old_pose.inverse());
-                approxPose = trackingState->get_current_camera_in_localmap().inverse();
-                lamdba *= settings_->lamdbaScale;
-                continue;
-            } else {
-                old_f = local_f;
-                old_pose = trackingState->get_current_camera_in_localmap().inverse();
-                hessian_good = local_hessian;
-                nabla_good = local_nabla;
-                nVaildPoints_good = local_nVaildPoints;
-                lamdba /= settings_->lamdbaScale;
-                f_good = local_f;
-            }
-
-            local_hessian = hessian_good + Eigen::Matrix<float, 6, 6>::Identity() * lamdba;
-            local_nabla = nabla_good;
-
-            Eigen::Matrix<float, 1, 6> delta = Eigen::Matrix<float, 1, 6>::Identity();
-            computeDelta(local_hessian, local_nabla, delta);
-            applyDelta(approxPose, delta);
-            trackingState->set_current_camera_in_localmap(approxPose.inverse());
+        if (local_f < f) {
+            lamdba /= lamdba_scale_;
+            pose_old = pose_good;
+            f = local_f;
+        } else {
+            pose_good = pose_old;
+            lamdba *= lamdba_scale_;
+            continue;
         }
-    }
-}
 
-void Tracker::prepare(std::shared_ptr<View> view, std::shared_ptr<TrackingState> trackingState) {
-    // 获取图像金字塔以及相机内参金字塔的第一层
-    rgbPyramid_[0] = view->rgb;
-    depthPyramid_[0] = view->depth;
-    normalPyramid_[0] = trackingState->get_normals();
-    pointcloudPyramid_[0] = trackingState->get_pointclouds();
-
-    if (rgbIntrinsicsPyramid_.empty()) {
-        rgbIntrinsicsPyramid_.emplace_back(view->calibrationParams.rgb);
-        depthIntrinsicsPyramid_.emplace_back(view->calibrationParams.depth);
-        for (int i = 1; i < nPyramidLevel_; ++i) {
-            rgbIntrinsicsPyramid_.emplace_back(rgbIntrinsicsPyramid_[i - 1].subIntrisic());
-            depthIntrinsicsPyramid_.emplace_back(depthIntrinsicsPyramid_[i - 1].subIntrisic());
-        }
+        local_hessian += Eigen::Matrix<float, 6, 6>::Identity() * lamdba;
+        Eigen::Vector<float, 6> delta = local_hessian.ldlt().solve(local_nabla);
+        applyDelta(pose_good, delta);
     }
 
-    for (int i = 1; i < nPyramidLevel_; ++i) {
-        // 深度和法向量图像金字塔下采样
-        Eigen::Vector2i mapSize{depthPyramid_[i - 1].rows, depthPyramid_[i - 1].cols};
-        filterSubsampleWithHoles(depthPyramid_[i - 1], depthPyramid_[i], mapSize);
-        filterSubsampleWithHoles(pointcloudPyramid_[i - 1], pointcloudPyramid_[i], mapSize);
-        filterSubsampleWithHoles(normalPyramid_[i - 1], normalPyramid_[i], mapSize, true);
-    }
+    return pose_good;
 }
 
-inline float rho(float r, float huber_r) {
-    float tmp = std::abs(r) - huber_r;
-    tmp = std::max(tmp, 0.0f);
-    return r * r - tmp * tmp;
-}
-
-#ifndef MIN
-#define MIN(a, b) ((a < b) ? a : b)
-#endif
-
-#ifndef MAX
-#define MAX(a, b) ((a < b) ? b : a)
-#endif
-
-#ifndef CLAMP
-#define CLAMP(x, a, b) MAX((a), MIN((b), (x)))
-#endif
-
-inline float rho_deriv(float r, float huber_b) { return 2.0f * CLAMP(r, -huber_b, huber_b); }
-
-inline float rho_deriv2(float r, float huber_b) { return fabs(r) < huber_b ? 2.0f : 0.0f; }
-
-Eigen::Matrix3f skew(const Eigen::Vector3f v) {
+inline Eigen::Matrix3f skew(const Eigen::Vector3f v) {
     Eigen::Matrix3f m;
     m << 0, -v.z(), v.y(), v.z(), 0, -v.x(), -v.y(), v.x(), 0;
     return m;
 }
-void Tracker::computeHessianAndGradient(
-    int id, Eigen::Matrix<float, 6, 6>& hessian, Eigen::Vector<float, 6>& nabla, float& f,
-    int& nVaildPoints, std::shared_ptr<View> view, Eigen::Matrix4f approxPose,
-    std::shared_ptr<TrackingState> trackingState) {
-    int rows = depthPyramid_[id].rows;
-    int cols = depthPyramid_[id].cols;
-    float* depth = (float*)depthPyramid_[id].data;
-    const auto normalMap = normalPyramid_[id];
-    const auto pointsMap = pointcloudPyramid_[id];
 
-    Eigen::Matrix4f generatePose = trackingState->get_generate_camera_in_localmap();
-    Eigen::Matrix3f k_inv = depthIntrinsicsPyramid_[id].k_inv;
-    Eigen::Matrix3f k = k_inv.inverse();
-
-    float viewFrustum_max = view->calibrationParams.viewFrustum_max;
-    float viewFrustum_min = view->calibrationParams.viewFrustum_min;
-
-    Eigen::Matrix<float, 1, 6> A;
-    const float spaceThreshold = spaceThresholds_[id];
-
-    for (int y = 1; y < rows - 1; ++y) {
-        int offset = y * cols;
-        for (int x = 1; x < cols - 1; ++x) {
-            Eigen::Vector<float, 6> local_hessian;
-            Eigen::Vector<float, 6> local_nabla;
-            float local_f{0.0f};
-
-            float b;
-            float currentDepth = depth[x + offset];
-            if (std::isnan(currentDepth)) continue;
-            Eigen::Vector3f currentPointcloud(x, y, 1.0f);
-            currentPointcloud = currentDepth * k_inv * currentPointcloud;
-
-            Eigen::Vector4f point_ =
-                approxPose * (Eigen::Vector4f() << currentPointcloud, 1.0f).finished();
-            Eigen::Vector3f point_in_last_view =
-                k * (generatePose * approxPose *
-                     (Eigen::Vector4f() << currentPointcloud, 1.0f).finished())
-                        .head(3);
-
-            if (point_in_last_view(2) < 1e-3) continue;
-
-            point_in_last_view /= point_in_last_view(2);
-            int coord_x = std::floor(point_in_last_view.head(2)(0));
-            int coord_y = std::floor(point_in_last_view.head(2)(1));
-
-            if (coord_x <= 0 || coord_x >= cols - 1 || coord_y <= 0 || coord_y >= rows - 1)
-                continue;
-
-            Eigen::Vector4f point =
-                interpolateBilinear_withHoles(pointsMap, point_in_last_view.head(2), cols);
-            if (std::isnan(point(3))) continue;
-            Eigen::Vector4f normal =
-                interpolateBilinear_withHoles(normalMap, point_in_last_view.head(2), cols);
-            if (std::isnan(normal(3))) continue;
-            b = normal.head(3).dot(point_.head(3) - point.head(3));
-
-            float depthWeight =
-                MAX(0.0f,
-                    1.0f - (currentDepth - viewFrustum_min) / (viewFrustum_max - viewFrustum_min));
-
-            A.block<1, 3>(0, 0) = -normal.head(3).transpose() * skew(point_.head(3));
-            A.block<1, 3>(0, 3) = normal.head(3).transpose();
-            local_f = rho(b, spaceThreshold) * pow(depthWeight, 2);
-            f += local_f;
-
-            hessian += A.transpose() * A * pow(depthWeight, 2);
-            nabla +=
-                -A.transpose() * depthWeight * rho_deriv(b, spaceThreshold) * pow(depthWeight, 2);
-            nVaildPoints++;
-        }
-    }
-    std::cout << f << std::endl;
-}
-
-void Tracker::computeDelta(
-    Eigen::Matrix<float, 6, 6> hessian, Eigen::Vector<float, 6> nabla,
-    Eigen::Matrix<float, 1, 6>& delta) {
-    delta = hessian.ldlt().solve(nabla);
-}
-
-void Tracker::applyDelta(Eigen::Matrix4f& pose, Eigen::Matrix<float, 1, 6> delta) {
+void Tracker::applyDelta(Eigen::Matrix4f& pose, Eigen::Vector<float, 6> delta) {
     Eigen::Vector3f dw = delta.head<3>();
     Eigen::Vector3f dv = delta.tail<3>();
     Eigen::Matrix3f dR = (Eigen::AngleAxisf(dw.norm(), dw.normalized())).toRotationMatrix();
     pose.block(0, 0, 3, 3) = dR * pose.block(0, 0, 3, 3);
     pose.block(0, 3, 3, 1) = dR * pose.block(0, 3, 3, 1) + dv;
-    std::cout << pose << std::endl;
+    Eigen::Quaternionf q_final(pose.block<3, 3>(0, 0));
+    q_final.normalize();
+    pose.block<3, 3>(0, 0) = q_final.toRotationMatrix();
 }
-void Tracker::updateQualityOfTracking(std::shared_ptr<TrackingState> trackingState, float f) {
-    if (f > 1500.0f)
-        trackingState->set_tracking_result(TrackingState::TrackingResult::TRACKING_FAILED);
-    else if (f > 1200.0f)
-        trackingState->set_tracking_result(TrackingState::TrackingResult::TRACKING_POOR);
-    else
-        trackingState->set_tracking_result(TrackingState::TrackingResult::TRACKING_GOOD);
+
+std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float> Tracker::buildLinearSystem(
+    const View& view, const Eigen::Matrix4f& current_pose, const Eigen::Matrix4f& prev_pose,
+    Eigen::Matrix3f k, int width, int height) {
+    const Eigen::Matrix3f current_r = current_pose.block(0, 0, 3, 3);
+    const Eigen::Vector3f current_t = current_pose.block(0, 3, 3, 1);
+    const Eigen::Matrix3f prev_r_inv = prev_pose.block(0, 0, 3, 3).inverse();
+    const Eigen::Vector3f prev_t = prev_pose.block(0, 3, 3, 1);
+
+    const Eigen::Vector3f* prev_depth_ptr = view.prev_depth.data();
+    const Eigen::Vector3f* prev_normal_ptr = view.prev_normal.data();
+    const Eigen::Vector3f* current_depth_ptr = view.depth.data();
+
+    // 计算hessian，nabla,f
+    auto compute_jacobian_and_residual = [&](int x, int y) -> LinearSystem {
+        // 获取上一帧所对应的法向量以及点
+        const Eigen::Vector3f& current_point = current_depth_ptr[y * width + x];
+        if (std::isnan(current_point[0])) return LinearSystem();
+        Eigen::Vector3f point = current_r * current_point + current_t;
+        Eigen::Vector3f project_point = k * prev_r_inv * (point - prev_t);
+        project_point /= project_point(2);
+        int coord_x = static_cast<int>(std::floor(project_point(0)));
+        int coord_y = static_cast<int>(std::floor(project_point(1)));
+        if (coord_x < 0 || coord_x > width - 1 || coord_y < 0 || coord_y > height - 1)
+            return LinearSystem();
+        const Eigen::Vector3f& prev_point = prev_depth_ptr[coord_y * width + coord_x];
+        if (std::isnan(prev_point(0))) return LinearSystem();
+        const Eigen::Vector3f& prev_normal = prev_normal_ptr[coord_y * width + coord_x];
+        if (std::isnan(prev_normal(0))) return LinearSystem();
+
+        LinearSystem linearSystem;
+        // 计算误差
+        float diff = prev_normal.transpose() * (point - prev_point);
+
+        Eigen::Matrix<float, 3, 6> A = Eigen::Matrix<float, 3, 6>::Zero();
+        A.block<3, 3>(0, 0) = -skew(point);
+        A.block<3, 3>(0, 3) = Eigen::Matrix3f::Identity();
+
+        Eigen::Matrix<float, 1, 6> J_r = prev_normal.transpose() * A;
+        linearSystem.hessian = J_r.transpose() * J_r * rho_deriv2(diff, space_threshold_);
+        linearSystem.nabla = -J_r * rho_deriv(diff, space_threshold_);
+        linearSystem.f = rho(diff, space_threshold_);
+        return linearSystem;
+    };
+
+    auto sum_linear_systems = [](LinearSystem a, const LinearSystem& b) {
+        a.hessian += b.hessian;
+        a.nabla += b.nabla;
+        a.f += b.f;
+        return a;
+    };
+
+    LinearSystem total = tbb::parallel_reduce(
+        tbb::blocked_range2d<int>(0, height, 0, width), LinearSystem(),
+        [&](const tbb::blocked_range2d<int>& r, LinearSystem local_sum) {
+            for (int y = r.rows().begin(); y < r.rows().end(); ++y)
+                for (int x = r.cols().begin(); x < r.cols().end(); ++x)
+                    local_sum = sum_linear_systems(local_sum, compute_jacobian_and_residual(x, y));
+
+            return local_sum;
+        },
+        sum_linear_systems);
+
+    return {total.hessian, total.nabla, total.f};
 }
-}  // namespace surface_reconstruction
+
+void Tracker::undistortion(cv::Mat& origin_depth, View& view) {
+    cv::Mat tmp;
+    cv::remap(origin_depth, tmp, mapX_, mapY_, cv::INTER_NEAREST);
+    Eigen::Vector3f* depth_ptr = view.depth.data();
+
+    uint16_t* depth_img_ptr = reinterpret_cast<uint16_t*>(tmp.data);
+    tbb::parallel_for(
+        tbb::blocked_range2d<int>(0, height_, 0, width_), [&](const tbb::blocked_range2d<int>& r) {
+            for (int y = r.rows().begin(); y < r.rows().end(); ++y)
+                for (int x = r.cols().begin(); x < r.cols().end(); ++x) {
+                    size_t offset = static_cast<size_t>(y * width_ + x);
+                    float depth_measure = (float)depth_img_ptr[offset] / depth_scale_;
+                    Eigen::Vector3f& point = depth_ptr[offset];
+                    if (depth_measure > 1e-4)
+                        point = rayMap_[offset] * depth_measure;
+                    else
+                        point(0) = std::numeric_limits<float>::quiet_NaN();
+                }
+        });
+}
+
+void Tracker::computeNormalMap(View& view) {
+    const int width = view.width;
+    const int height = view.height;
+
+    Eigen::Vector3f* normal_ptr = view.prev_normal.data();
+    const Eigen::Vector3f* depth_ptr = view.prev_depth.data();
+    tbb::parallel_for(
+        tbb::blocked_range2d<int>(3, height - 3, 3, width - 3),
+        [&](const tbb::blocked_range2d<int>& r) {
+            for (int y = r.rows().begin(); y < r.rows().end(); ++y)
+                for (int x = r.cols().begin(); x < r.cols().end(); ++x) {
+                    Eigen::Vector3f points[4];
+                    Eigen::Vector3f& normal = normal_ptr[x + y * width];
+                    Eigen::Vector3f diff_x, diff_y;
+
+                    points[0] = depth_ptr[x + 2 + y * width];
+                    points[1] = depth_ptr[x + (y + 2) * width];
+                    points[2] = depth_ptr[x - 2 + y * width];
+                    points[3] = depth_ptr[x + (y - 2) * width];
+
+                    bool doPlus{false};
+
+                    if (std::isnan(points[0](0)) || std::isnan(points[1](0)) ||
+                        std::isnan(points[2](0)) || std::isnan(points[3](0)))
+                        doPlus = true;
+
+                    if (doPlus) {
+                        points[0] = depth_ptr[x + 1 + y * width];
+                        points[1] = depth_ptr[x + (y + 1) * width];
+                        points[2] = depth_ptr[x - 1 + y * width];
+                        points[3] = depth_ptr[x + (y - 1) * width];
+
+                        if (std::isnan(points[0](0)) || std::isnan(points[1](0)) ||
+                            std::isnan(points[2](0)) || std::isnan(points[3](0)))
+                            continue;
+                    }
+                    diff_x = points[0] - points[2];
+                    diff_y = points[1] - points[3];
+
+                    normal = diff_y.cross(diff_x);
+
+                    float norm = normal.norm();
+
+                    if (norm < 1e-5) continue;
+                    normal(0) /= norm;
+                    normal(1) /= norm;
+                    normal(2) /= norm;
+                }
+        });
+}
+
+void Tracker::transform(View& view, const Eigen::Matrix4f global_pose) {
+    const int width = view.width;
+    const int height = view.height;
+    const Eigen::Matrix3f rotation = global_pose.block(0, 0, 3, 3);
+    const Eigen::Vector3f translation = global_pose.block(0, 3, 3, 1);
+    Eigen::Vector3f* depth_ptr = view.prev_depth.data();
+
+    tbb::parallel_for(
+        tbb::blocked_range2d<int>(3, height - 3, 3, width - 3),
+        [&](const tbb::blocked_range2d<int>& r) {
+            for (int y = r.rows().begin(); y < r.rows().end(); ++y)
+                for (int x = r.cols().begin(); x < r.cols().end(); ++x) {
+                    auto& point = depth_ptr[y * width + x];
+                    if (!std::isnan(point(0))) point = rotation * point + translation;
+                }
+        });
+}

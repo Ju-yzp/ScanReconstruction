@@ -1,79 +1,74 @@
-cmake_minimum_required(VERSION 3.10)
-project(surface_retruction VERSION 1.0)
+cmake_minimum_required(VERSION 3.16...3.26)
+project(
+  kiss_icp_cpp
+  VERSION 1.2.3
+  LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_LINKER
-    "ld.gold"
-    CACHE STRING "Linker" FORCE)
+# Setup build options
+option(USE_CCACHE "Build using Ccache if found on the path" ON)
+option(USE_SYSTEM_TSL-ROBIN-MAP "Use system pre-installed tsl_robin" ON)
+option(USE_SYSTEM_TBB "Use system pre-installed oneAPI/tbb" ON)
 
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE
-      Debug
-      CACHE STRING "Choose the type of build." FORCE)
+# ccache setup
+if(USE_CCACHE)
+  find_program(CCACHE_PATH ccache)
+  if(CCACHE_PATH)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
+    message(STATUS "Using ccache: ${CCACHE_PATH}")
+  endif()
 endif()
-
-cmake_policy(SET CMP0072 NEW)
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(OpenCV REQUIRED)
 find_package(g2o REQUIRED)
-find_package(OpenMP REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(PCL REQUIRED)
-
+find_package(cv_bridge REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(sensor_msgs REQUIRED)
 # set(OrbbecSDK_DIR "/home/adrewn/OrbbecSDK") find_package(OrbbecSDK REQUIRED)
 
-file(GLOB_RECURSE SOURCES "src/*.cpp" "src/*.cxx")
+# Set build type (repeat here for C++ only consumers)
+set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# add_library(surface_retruction ${SOURCES}) target_include_directories(
-# surface_retruction PUBLIC ${PROJECT_SOURCE_DIR}/include ${Eigen3_INCLUDE_DIRS}
-# ${OpenCV_INCLUDE_DIRS} ${G2O_INCLUDE_DIRS})
+include(third_party/find_dependencies.cmake)
+include(cmake/CompilerOptions.cmake)
 
-# target_link_libraries(surface_retruction PUBLIC ${OpenCV_LIBS}
-# ${G2O_LIBRARIES} Eigen3::Eigen Sophus::Sophus)
+add_library(tracker SHARED)
+target_sources(tracker PRIVATE src/tracker.cpp)
+target_link_libraries(tracker PUBLIC Eigen3::Eigen tsl::robin_map TBB::tbb
+                                     ${OpenCV_LIBS})
 
-# add_executable(test_visualisation test/test_visualisation.cpp)
-# target_include_directories( test_visualisation PUBLIC
-# ${PROJECT_SOURCE_DIR}/Tracker/include
-# ${PROJECT_SOURCE_DIR}/VisualisationEngine/include ${Eigen3_INCLUDE_DIRS}
-# ${OpenCV_INCLUDE_DIRS} ${G2O_INCLUDE_DIRS} # ${rclcpp_INCLUDE_DIRS}
-# ${visualization_msgs_INCLUDE_DIRS} )
+target_include_directories(tracker PUBLIC include)
+set_global_target_properties(tracker)
 
-# target_link_libraries( test_visualisation PUBLIC ${OpenCV_LIBS}
-# ${G2O_LIBRARIES} Sophus::Sophus # rclcpp::rclcpp #
-# ${visualization_msgs_LIBRARIES} VisualisationEngine)
+set(ROS_ROOT_DIR /opt/ros/humble)
 
-# add_executable(test_tracker test/test_tracker.cpp src/tracker.cpp)
-# target_include_directories(test_tracker PUBLIC include ${Eigen3_INCLUDE_DIRS}
-# ${OpenCV_INCLUDE_DIRS})
+set(all_headers
+    /opt/ros/humble/include /opt/ros/humble/include/cv_bridge
+    /opt/ros/humble/include/tf2_ros /opt/ros/humble/include/tf2_msgs
+    /opt/ros/humble/include/sensor_msgs /opt/ros/humble/include/message_filters)
 
-# target_link_libraries(test_tracker PUBLIC ${OpenCV_LIBS} )
+add_executable(visualizer test/test_visualizer.cpp)
 
-add_executable(test_matcher test/matcher_test.cpp src/visualisation_engine.cpp
-                            src/tracker.cpp src/coarseMatcher.cpp)
-target_include_directories(
-  test_matcher
-  PUBLIC include ${OpenCV_INCLUDE_DIRS}
-         # ${visualization_msgs_INCLUDE_DIRS}
-         ${Eigen3_INCLUDE_DIRS})
+target_include_directories(visualizer PUBLIC include ${OpenCV_INCLUDE_DIRS}
+                                             ${all_headers})
+
+target_link_directories(visualizer PUBLIC ${ROS_ROOT_DIR}/lib)
 
 target_link_libraries(
-  test_matcher PUBLIC ${OpenCV_LIBS} Eigen3::Eigen ${PCL_LIBRARIES}
-  # rclcpp::rclcpp ${visualization_msgs_LIBRARIES}
-)
-
-# add_executable(test_visual test/test_visual.cpp src/visualisation_engine.cpp
-# src/tracker.cpp )
-
-# target_include_directories( test_visual PUBLIC include
-# #${visualization_msgs_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
-
-# target_link_libraries( test_visual PUBLIC #rclcpp::rclcpp ${OpenCV_LIBS}
-# #${PCL_LIBRARIES} Eigen3::Eigen #${visualization_msgs_LIBRARIES} )
-
-# add_executable(camera test/collect_data.cpp) target_include_directories(camera
-# PUBLIC ${OpenCV_INCLUDE_DIRS}) target_link_libraries(camera PUBLIC
-# OrbbecSDK::OrbbecSDK ${OpenCV_LIBS})
+  visualizer
+  PUBLIC cv_bridge
+         tf2_ros
+         tf2_msgs__rosidl_typesupport_cpp
+         sensor_msgs__rosidl_typesupport_cpp
+         rclcpp::rclcpp
+         cv_bridge::cv_bridge
+         tracker)

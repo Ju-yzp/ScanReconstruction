@@ -1,11 +1,13 @@
 #include <localMapManager.h>
 #include <cassert>
+#include <memory>
 #include <optional>
+#include "localMap.h"
 
 namespace surface_reconstruction {
-ActiveMapDescriptor LocalMapManager::createNewLocalMap(bool isPrimary) {
+ActiveMapDescriptor LocalMapManager::createNewLocalMapDescriptor(bool isPrimary) {
     ActiveMapDescriptor descriptor;
-    descriptor.id = static_cast<int>(activeLocalMaps_.size());
+    descriptor.id = createNewLocalMap();
     descriptor.state = isPrimary ? LocalMapState::PRIMARY_LOCAL_MAP : LocalMapState::NEW_LOCAL_MAP;
     activeLocalMaps_.emplace_back(descriptor);
     return descriptor;
@@ -87,5 +89,12 @@ bool LocalMapManager::maintainActiveData() {
             restartLinksToLocalMaps.emplace_back(localMap.id);
         }
     }
+}
+
+int LocalMapManager::createNewLocalMap() {
+    std::shared_ptr<LocalMap> newLocalMap = std::make_shared<LocalMap>(settings_);
+    int id = allLocalMaps_.size();
+    allLocalMaps_.emplace_back(newLocalMap);
+    return id;
 }
 }  // namespace surface_reconstruction

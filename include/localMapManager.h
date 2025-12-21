@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 #include <localMap.h>
@@ -31,7 +32,7 @@ struct ActiveMapDescriptor {
 
 class LocalMapManager {
 public:
-    ActiveMapDescriptor createNewLocalMap(bool isPrimary = false);
+    ActiveMapDescriptor createNewLocalMapDescriptor(bool isPrimary = false);
 
     bool isStartNewArea();
 
@@ -41,7 +42,25 @@ public:
 
     bool maintainActiveData();
 
+    int size() { return activeLocalMaps_.size(); }
+
+    std::shared_ptr<LocalMap> getLocalMap(int id) {
+        if (id > 0 && id < allLocalMaps_.size())
+            return allLocalMaps_[id];
+        else
+            throw std::runtime_error("The input index is over size of localmap");
+    }
+
+    ActiveMapDescriptor getActiveDescriptor(int id) {
+        if (id > 0 && id < activeLocalMaps_.size())
+            return activeLocalMaps_[id];
+        else
+            throw std::runtime_error("The input index is over size of activeDesciptor");
+    }
+
 private:
+    int createNewLocalMap();
+
     enum class RelocalisationResult : uint8_t {
         RELOCALISATION_FAILD = 0,
         RELOCALISATION_TRYING = 1,

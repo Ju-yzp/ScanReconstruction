@@ -1,65 +1,85 @@
 #ifndef TRACKER_H_
 #define TRACKER_H_
 
-// opencv
-#include <Eigen/Core>
-#include <memory>
-#include <opencv2/opencv.hpp>
-
-// surface_reconstruction
-#include <calibrationParams.h>
-#include <settings.h>
-#include <trackingState.h>
-#include <view.h>
+#include <tbb/global_control.h>
 
 // eigen
+#include <Eigen/Core>
 #include <Eigen/Eigen>
 
-namespace surface_reconstruction {
+// cpp
+#include <limits>
+#include <tuple>
+
+// opencv
+#include <opencv2/opencv.hpp>
+
+struct View {
+    View(int height_, int width_) : width(width_), height(height_) {
+        Eigen::Vector3f initiali_value(std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
+        depth.resize((size_t)(height_ * width_), initiali_value);
+        prev_normal.resize((size_t)(height_ * width_), initiali_value);
+        prev_depth.resize((size_t)(height_ * width_), initiali_value);
+    }
+    std::vector<Eigen::Vector3f> depth;
+    std::vector<Eigen::Vector3f> prev_depth;
+    std::vector<Eigen::Vector3f> prev_normal;
+
+    void swapDepth() { depth.swap(prev_depth); }
+
+    int width;
+    int height;
+};
+
 class Tracker {
 public:
     Tracker(
-        std::shared_ptr<Settings> settins, int nPyramidLevel, int maxNIteration, int minNIteration,
-        float maxSpaceThreshold, float minSpaceThreshold);
+        cv::Mat k, cv::Mat d, cv::Size2i imgSize, int max_num_threads, int max_num_iterations,
+        float initial_lamdba, float lamdba_scale, float depth_scale, float space_threshold);
 
-    void track(std::shared_ptr<View> view, std::shared_ptr<TrackingState> trackingState);
+    void undistortion(cv::Mat& origin_depth, View& view);
 
-    // 获取图像金字塔
-    void prepare(std::shared_ptr<View> view, std::shared_ptr<TrackingState> trackingState);
+    Eigen::Matrix4f track(View& view);
 
-    // 写入追踪质量
-    void updateQualityOfTracking(std::shared_ptr<TrackingState> trackingState, float f);
+    std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float> buildLinearSystem(
+        const View& view, const Eigen::Matrix4f& current_pose, const Eigen::Matrix4f& prev_pose,
+        Eigen::Matrix3f k, int width, int height);
 
-    // 计算深度图像的hessian矩阵和梯度值
-    void computeHessianAndGradient(
-        int id, Eigen::Matrix<float, 6, 6>& hessian, Eigen::Vector<float, 6>& nabla, float& f,
-        int& nVaildPoints, std::shared_ptr<View> view, Eigen::Matrix4f approxPose,
-        std::shared_ptr<TrackingState> trackingState);
+    static void applyDelta(Eigen::Matrix4f& pose, Eigen::Vector<float, 6> delta);
 
-    // 计算变化量
-    void computeDelta(
-        Eigen::Matrix<float, 6, 6> hessian, Eigen::Vector<float, 6> nabla,
-        Eigen::Matrix<float, 1, 6>& delta);
+    static void computeNormalMap(View& view);
 
-    // 应用变化量
-    void applyDelta(Eigen::Matrix4f& pose, Eigen::Matrix<float, 1, 6> delta);
+    static void transform(View& view, const Eigen::Matrix4f global_pose);
+
+    Eigen::Matrix4f get_pose() { return global_pose_; }
+
+    void set_global_pose(Eigen::Matrix4f new_pose) { global_pose_ = new_pose; }
 
 private:
-    std::vector<cv::Mat> rgbPyramid_;
-    std::vector<cv::Mat> depthPyramid_;
+    struct LinearSystem {
+        Eigen::Matrix<float, 6, 6> hessian = Eigen::Matrix<float, 6, 6>::Zero();
+        Eigen::Vector<float, 6> nabla = Eigen::Vector<float, 6>::Zero();
+        float f{0.0f};
+    };
 
-    std::vector<Intrinsic> rgbIntrinsicsPyramid_;
-    std::vector<Intrinsic> depthIntrinsicsPyramid_;
+    cv::Mat mapX_, mapY_;
 
-    std::vector<std::shared_ptr<std::vector<Eigen::Vector4f>>> pointcloudPyramid_;
-    std::vector<std::shared_ptr<std::vector<Eigen::Vector4f>>> normalPyramid_;
+    Eigen::Matrix3f k_;
 
-    std::vector<int> nIterationPyramid_;
-    std::vector<float> spaceThresholds_;
-    int nPyramidLevel_;
+    int max_num_iterations_;
 
-    std::shared_ptr<Settings> settings_;
+    int height_, width_;
+
+    float initial_lamdba_;
+
+    float lamdba_scale_;
+
+    float depth_scale_;
+
+    float space_threshold_;
+
+    std::vector<Eigen::Vector3f> rayMap_;
+
+    Eigen::Matrix4f global_pose_;
 };
-}  // namespace surface_reconstruction
-
-#endif  // TRACKER_H_
+#endif
