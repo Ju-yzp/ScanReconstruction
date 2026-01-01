@@ -23,8 +23,10 @@
 
 Tracker::Tracker(
     cv::Mat k, cv::Mat d, cv::Size2i imgSize, int max_num_threads, int max_num_iterations,
-    float initial_lamdba, float lamdba_scale, float depth_scale, float space_threshold)
+    int min_nVaildPoints, float initial_lamdba, float lamdba_scale, float depth_scale,
+    float space_threshold)
     : max_num_iterations_(max_num_iterations),
+      min_nVaildPoints_(min_nVaildPoints),
       initial_lamdba_(initial_lamdba),
       lamdba_scale_(lamdba_scale),
       depth_scale_(depth_scale),
@@ -42,9 +44,10 @@ Tracker::Tracker(
 
     rayMap_.resize((size_t)(width_ * height_), Eigen::Vector3f::Zero());
 
-    global_pose_ = Eigen::Matrix4f::Identity();
+    global_pose_ = last_delta_ = Eigen::Matrix4f::Identity();
 
     Eigen::Matrix3f inv_k = k_.inverse();
+    std::cout << inv_k << std::endl;
     for (int y = 0; y < height_; ++y)
         for (int x = 0; x < width_; ++x)
             rayMap_[(size_t)(y * width_ + x)] = inv_k * Eigen::Vector3f(float(x), float(y), 1.0f);
@@ -60,9 +63,11 @@ Eigen::Matrix4f Tracker::track(View& view) {
     float lamdba{initial_lamdba_};
 
     for (int i{0}; i < max_num_iterations_; ++i) {
-        auto [local_hessian, local_nabla, local_f] =
+        auto [local_hessian, local_nabla, local_f, nVaildPoints] =
             buildLinearSystem(view, pose_good, global_pose_, k_, width_, height_);
 
+        if (nVaildPoints < 1) break;
+        local_f /= (float)nVaildPoints;
         if (local_f < f) {
             lamdba /= lamdba_scale_;
             pose_old = pose_good;
@@ -73,6 +78,17 @@ Eigen::Matrix4f Tracker::track(View& view) {
             continue;
         }
 
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix<float, 6, 6>> saes(local_hessian);
+
+        Eigen::Vector<float, 6> eigenvalues = saes.eigenvalues();
+        Eigen::Matrix<float, 6, 6> eigenvectors = saes.eigenvectors();
+        for (int i = 0; i < 6; ++i) {
+            if (eigenvalues(i) < 1e-4) {
+                std::cout << "警告：发现退化方向！特征值 index: " << i << std::endl;
+                std::cout << "退化方向向量 (特征向量): " << eigenvectors.col(i).transpose()
+                          << std::endl;
+            }
+        }
         local_hessian += Eigen::Matrix<float, 6, 6>::Identity() * lamdba;
         Eigen::Vector<float, 6> delta = local_hessian.ldlt().solve(local_nabla);
         applyDelta(pose_good, delta);
@@ -98,7 +114,8 @@ void Tracker::applyDelta(Eigen::Matrix4f& pose, Eigen::Vector<float, 6> delta) {
     pose.block<3, 3>(0, 0) = q_final.toRotationMatrix();
 }
 
-std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float> Tracker::buildLinearSystem(
+std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float, int>
+Tracker::buildLinearSystem(
     const View& view, const Eigen::Matrix4f& current_pose, const Eigen::Matrix4f& prev_pose,
     Eigen::Matrix3f k, int width, int height) {
     const Eigen::Matrix3f current_r = current_pose.block(0, 0, 3, 3);
@@ -139,6 +156,7 @@ std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float> Tracker::
         linearSystem.hessian = J_r.transpose() * J_r * rho_deriv2(diff, space_threshold_);
         linearSystem.nabla = -J_r * rho_deriv(diff, space_threshold_);
         linearSystem.f = rho(diff, space_threshold_);
+        linearSystem.VaildPoint = 1;
         return linearSystem;
     };
 
@@ -146,6 +164,7 @@ std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float> Tracker::
         a.hessian += b.hessian;
         a.nabla += b.nabla;
         a.f += b.f;
+        a.VaildPoint += b.VaildPoint;
         return a;
     };
 
@@ -160,15 +179,15 @@ std::tuple<Eigen::Matrix<float, 6, 6>, Eigen::Vector<float, 6>, float> Tracker::
         },
         sum_linear_systems);
 
-    return {total.hessian, total.nabla, total.f};
+    return {total.hessian, total.nabla, total.f, total.VaildPoint};
 }
 
 void Tracker::undistortion(cv::Mat& origin_depth, View& view) {
-    cv::Mat tmp;
-    cv::remap(origin_depth, tmp, mapX_, mapY_, cv::INTER_NEAREST);
+    // cv::Mat tmp;
+    // cv::remap(origin_depth, tmp, mapX_, mapY_, cv::INTER_NEAREST);
     Eigen::Vector3f* depth_ptr = view.depth.data();
 
-    uint16_t* depth_img_ptr = reinterpret_cast<uint16_t*>(tmp.data);
+    uint16_t* depth_img_ptr = reinterpret_cast<uint16_t*>(origin_depth.data);
     tbb::parallel_for(
         tbb::blocked_range2d<int>(0, height_, 0, width_), [&](const tbb::blocked_range2d<int>& r) {
             for (int y = r.rows().begin(); y < r.rows().end(); ++y)
@@ -217,8 +236,10 @@ void Tracker::computeNormalMap(View& view) {
                         points[3] = depth_ptr[x + (y - 1) * width];
 
                         if (std::isnan(points[0](0)) || std::isnan(points[1](0)) ||
-                            std::isnan(points[2](0)) || std::isnan(points[3](0)))
+                            std::isnan(points[2](0)) || std::isnan(points[3](0))) {
+                            normal(0) = std::numeric_limits<float>::quiet_NaN();
                             continue;
+                        }
                     }
                     diff_x = points[0] - points[2];
                     diff_y = points[1] - points[3];
@@ -227,7 +248,10 @@ void Tracker::computeNormalMap(View& view) {
 
                     float norm = normal.norm();
 
-                    if (norm < 1e-5) continue;
+                    if (norm < 1e-5) {
+                        normal(0) = std::numeric_limits<float>::quiet_NaN();
+                        continue;
+                    }
                     normal(0) /= norm;
                     normal(1) /= norm;
                     normal(2) /= norm;
@@ -252,3 +276,7 @@ void Tracker::transform(View& view, const Eigen::Matrix4f global_pose) {
                 }
         });
 }
+
+// void Tracker::evaluateTrackingQuality(View& view, TrackingResult& trackingResult){
+
+// }
