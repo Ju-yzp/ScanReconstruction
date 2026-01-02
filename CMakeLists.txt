@@ -49,7 +49,7 @@ include(third_party/find_dependencies.cmake)
 include(cmake/CompilerOptions.cmake)
 
 add_library(core SHARED)
-target_sources(core PRIVATE src/tracker.cpp src/keyframe.cpp src/KeyframeSystem.cpp)
+target_sources(core PRIVATE src/KeyframeSystem.cpp src/DepthTracker.cpp)
 target_link_libraries(core PUBLIC Eigen3::Eigen tsl::robin_map TBB::tbb
                                      ${OpenCV_LIBS})
 
@@ -81,28 +81,10 @@ target_link_libraries(
          visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
          core)
 
-add_executable(keyframe_system test/test_keyframe.cpp )
+# add_library(synchronizer SHARED src/synchronizer.cpp src/imuKinematicObserver.cpp)
+# target_include_directories(synchronizer PUBLIC include)
+# target_link_libraries(synchronizer PUBLIC OrbbecSDK::OrbbecSDK ${OpenCV_LIBS} Sophus::Sophus)
 
-target_include_directories(keyframe_system PUBLIC include ${OpenCV_INCLUDE_DIRS}
-                                             ${all_headers} )
-
-target_link_directories(keyframe_system PUBLIC ${ROS_ROOT_DIR}/lib)
-
-target_link_libraries(
-  keyframe_system
-  PUBLIC cv_bridge
-         tf2_ros
-         tf2_msgs__rosidl_typesupport_cpp
-         sensor_msgs__rosidl_typesupport_cpp
-         rclcpp::rclcpp
-         cv_bridge::cv_bridge
-         visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
-         core)
-
-add_library(synchronizer SHARED src/synchronizer.cpp src/imuKinematicObserver.cpp)
-target_include_directories(synchronizer PUBLIC include)
-target_link_libraries(synchronizer PUBLIC OrbbecSDK::OrbbecSDK ${OpenCV_LIBS} Sophus::Sophus)
-
-add_executable(imuKinematicObserver test/test_imuKinematicObserver.cpp)
-target_include_directories(imuKinematicObserver PUBLIC include)
-target_link_libraries(imuKinematicObserver PRIVATE synchronizer)
+# add_executable(imuKinematicObserver test/test_imuKinematicObserver.cpp)
+# target_include_directories(imuKinematicObserver PUBLIC include)
+# target_link_libraries(imuKinematicObserver PRIVATE synchronizer)

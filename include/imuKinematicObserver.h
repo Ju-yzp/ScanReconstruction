@@ -6,7 +6,7 @@
 #include <sophus/se3.hpp>
 #include <sophus/so3.hpp>
 
-#include <types.h>
+#include <Types.h>
 
 // 简单的IMU运动学观察器
 class ImuKinematicObserver {

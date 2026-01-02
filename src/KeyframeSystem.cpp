@@ -116,7 +116,7 @@ bool KeyframeSystem::insert(Keyframe& new_keyframe) {
     return true;
 }
 
-// // 使用卡方檢驗來判斷兩幀的相似度
+// 使用卡方檢驗來判斷兩幀的相似度
 bool KeyframeSystem::isSimilarity(Keyframe& a, Keyframe& b, float& distance) {
     Histogram& a_histogram = a.histogram;
     Histogram& b_histogram = b.histogram;

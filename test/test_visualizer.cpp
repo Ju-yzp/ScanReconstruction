@@ -1,18 +1,24 @@
 #include <cv_bridge/cv_bridge.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_broadcaster.h>
-#include <tracker.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+
+#include <rclcpp/logging.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+
+#include <DepthTracker.h>
+#include <GlobalSettings.h>
+#include <Viewer.h>
+
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <cmath>
-#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <memory>
 #include <opencv2/opencv.hpp>
-#include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
-#include <sensor_msgs/msg/point_cloud2.hpp>
-#include <sensor_msgs/point_cloud2_iterator.hpp>
-#include <visualization_msgs/msg/marker_array.hpp>
+#include "Types.h"
+
+using namespace ScanReconstruction;
 
 class ImageConverterNode : public rclcpp::Node {
 public:
@@ -30,18 +36,31 @@ public:
              750.8400268554688, 363.7984313964844, 0.0, 0.0, 1.0);
         cv::Mat D = (cv::Mat_<double>(8, 1) << 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
-        tracker_ = std::make_unique<Tracker>(
-            K, D, cv::Size2i(1280, 720), 8, 10, 50, 1.0f, 5.0f, 1000.0f, 0.03f);
+        global_settings_ = std::make_shared<GlobalSettings>();
+        global_settings_->set_max_num_threads(8);
+        global_settings_->width = 1280;
+        global_settings_->height = 720;
+        global_settings_->k << -751.5050659179688, 0.0, 635.4237670898438, 0.0, 750.8400268554688,
+            363.7984313964844, 0.0, 0.0, 1.0;
+        global_settings_->space_threshold_min = 0.03f;
+        global_settings_->space_threshold_max = 0.1f;
+        global_settings_->min_num_iterations = 3;
+        global_settings_->max_num_iterations = 6;
+        global_settings_->pyramid_levels = 3;
+        global_settings_->initial_lamdba = 1.0f;
+        global_settings_->lamdba_scale = 5.0f;
+        global_settings_->viewFrustum_max = 4.0f;
+        global_settings_->viewFrustum_min = 0.15f;
+        global_settings_->voxel_size = 0.01f;
+        global_settings_->voxel_block_size = 8;
+        global_settings_->reverse_num = 100000;
+        global_settings_->bin_num = 13;
+        global_settings_->similarity_threshold = 0.5f;
 
-        view_ = std::make_unique<View>(720, 1280);
+        viewer_ = std::make_shared<Viewer>(
+            global_settings_->height, global_settings_->width, global_settings_->k, 1000.0f);
 
-        map_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("local_map", qos_profile);
-        RCLCPP_INFO(
-            this->get_logger(),
-            "Image converter node initialized, subscribing to depth images only");
-
-        marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            "tsdf_markers", qos_profile);
+        depth_tracker_ = std::make_shared<DepthTracker>(global_settings_);
 
         static auto static_tf_pub = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
         geometry_msgs::msg::TransformStamped map_tf;
@@ -71,40 +90,32 @@ private:
         cv::Mat depth_image = cv_depth_ptr->image;
 
         if (!depth_image.empty()) {
-            tracker_->undistortion(depth_image, *view_);
-            if (!isInitialied) {
-                view_->swapDepth();
-                Tracker::transform(*view_, tracker_->get_pose());
-                Tracker::computeNormalMap(*view_);
-                isInitialied = true;
-            } else {
-                auto start_solve = this->get_clock()->now();
-                auto end_solve = this->get_clock()->now();
+            if (viewer_->get_tracking_result() == TrackingResult::LOST) {
+                RCLCPP_WARN(this->get_logger(), "Tracking lost!");
+                return;
+            }
 
-                // auto start_integrate = this->get_clock()->now();
-                // map_->allocateMemory(view_->depth, pose);
-                // map_->intergrateIntoMap(view_->depth, pose);
-                // map_->update_status(pose);
-                // auto end_integrate = this->get_clock()->now();
+            viewer_->set_current_points(depth_image);
 
-                double solve_ms = (end_solve - start_solve).nanoseconds() / 1e6;
-                double total_ms = (this->get_clock()->now() - start_total).nanoseconds() / 1e6;
+            if (is_initialized_ == false) {
+                viewer_->swap_current_and_previous_points();
+                is_initialized_ = true;
+                return;
+            }
+            Eigen::Matrix4f initial_pose = depth_tracker_->get_initial_guess_pose();
+            depth_tracker_->track(viewer_, initial_pose);
+            if (viewer_->get_tracking_result() == TrackingResult::GOOD) {
+                std::cout << "current pose :\n" << initial_pose << std::endl;
+                publish_tf_transform(initial_pose, "map", "camera", this->get_clock()->now());
+                viewer_->transform(initial_pose);
+                viewer_->swap_current_and_previous_points();
             }
         }
-
-        // publish_voxel_markers();
     }
 
     void publish_tf_transform(
         const Eigen::Matrix4f& T_world_optical, const std::string& parent_frame_id,
         const std::string child_frame_id, const rclcpp::Time stamp) {
-        static Eigen::Matrix4f camera_to_base;
-        camera_to_base << 0.0f, 0.0f, 1.0f, 0.0f, -1.0f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, 1.0f;
-
-        // Eigen::Matrix4f T_map_to_base = camera_to_base * T_world_optical *
-        // camera_to_base.inverse();
-
         Eigen::Matrix4f T_map_to_base = T_world_optical;
         auto t_stamped = geometry_msgs::msg::TransformStamped();
         t_stamped.header.stamp = stamp;
@@ -127,14 +138,12 @@ private:
 
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr map_pub_;
+    std::shared_ptr<Viewer> viewer_;
+    std::shared_ptr<GlobalSettings> global_settings_;
 
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    std::shared_ptr<DepthTracker> depth_tracker_;
 
-    std::unique_ptr<Tracker> tracker_;
-    std::unique_ptr<View> view_;
-
-    bool isInitialied{false};
+    bool is_initialized_{false};
 };
 
 int main(int argc, char* argv[]) {

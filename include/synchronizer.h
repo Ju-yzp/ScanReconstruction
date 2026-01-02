@@ -15,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-#include <types.h>
+#include <Types.h>
 
 // TODO: 暂时是给Orbbec Femto Bolt写的，后期再修改下适配多设备软同步
 class Synchronizer {

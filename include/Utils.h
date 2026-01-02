@@ -4,9 +4,9 @@
 #include <tsl/robin_growth_policy.h>
 #include <tsl/robin_map.h>
 #include <Eigen/Core>
-#include <atomic>
 #include <cmath>
-#include <memory>
+
+namespace ScanReconstruction {
 
 // // 体素键
 // using VoxelKey = Eigen::Vector3i;
@@ -66,6 +66,12 @@ using Map = std::vector<Eigen::Vector3f>;
 #define CLAMP(x, a, b) MAX((a), MIN((b), (x)))
 #endif
 
+inline Eigen::Matrix3f skew(const Eigen::Vector3f v) {
+    Eigen::Matrix3f m;
+    m << 0, -v.z(), v.y(), v.z(), 0, -v.x(), -v.y(), v.x(), 0;
+    return m;
+}
+
 inline float rho(float r, float huber_b) {
     float tmp = std::fabs(r) - huber_b;
     tmp = std::max(tmp, 0.0f);
@@ -75,4 +81,6 @@ inline float rho(float r, float huber_b) {
 inline float rho_deriv(float r, float huber_b) { return 2.0f * CLAMP(r, -huber_b, huber_b); }
 
 inline float rho_deriv2(float r, float huber_b) { return fabs(r) < huber_b ? 2.0f : 0.0f; }
+
+}  // namespace ScanReconstruction
 #endif
