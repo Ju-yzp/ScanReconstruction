@@ -11,7 +11,7 @@
 
 namespace ScanReconstruction {
 inline void filterSubsampleWithHoles(
-    std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>& input,
+    const std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>& input,
     std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>& output, int height,
     int width, bool isNormal = false) {
     int output_rows = height / 2;
@@ -20,7 +20,7 @@ inline void filterSubsampleWithHoles(
     if (output.size() != size_t(output_cols * output_rows))
         throw std::runtime_error("Output size is not correct");
 
-    Eigen::Vector3f* input_ptr = input.data();
+    const Eigen::Vector3f* input_ptr = input.data();
 
     tbb::parallel_for(
         tbb::blocked_range2d<int>(0, output_rows, 0, output_cols),

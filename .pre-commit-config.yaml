@@ -20,13 +20,11 @@ repos:
             args: [-fallback-style=none]
             files: \.(h|hh|hxx|hpp|c|cc|cpp|cxx)$
 
-    # - repo: https://github.com/cheshirekow/cmake-format-precommit
-    #   rev: v0.6.13
-    #   hooks:
-    #       - id: cmake-format
-    #         files: (CMakeLists\.txt|\.cmake)$
-    #       - id: cmake-lint
-    #         files: (CMakeLists\.txt|\.cmake)$
+    - repo: https://github.com/cheshirekow/cmake-format-precommit
+      rev: v0.6.13
+      hooks:
+          - id: cmake-format
+            files: (CMakeLists\.txt|\.cmake)$
 
     - repo: https://github.com/pre-commit/pre-commit-hooks
       rev: v1.2.3

@@ -8,12 +8,52 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Setup build options
+add_compile_options(-msse4.2 -mavx2 -mfma)
+
+add_definitions(-DEIGEN_VECTORIZE_SSE42 -DEIGEN_VECTORIZE_AVX2)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE
+      Release
+      CACHE STRING "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)"
+            FORCE)
+endif()
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
+
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG")
+
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO
+    "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g -fno-omit-frame-pointer -DNDEBUG")
+
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
+
+set(CMAKE_CXX_FLAGS_MINSIZEREL "${CMAKE_CXX_FLAGS_MINSIZEREL} -Os -DNDEBUG")
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 option(USE_CCACHE "Build using Ccache if found on the path" ON)
 option(USE_SYSTEM_TSL-ROBIN-MAP "Use system pre-installed tsl_robin" ON)
 option(USE_SYSTEM_TBB "Use system pre-installed oneAPI/tbb" ON)
 
-# ccache setup
+option(WITH_PROFILING
+       "Build with profiling support (debug symbols, frame pointer)" OFF)
+
+if(WITH_PROFILING)
+  message(STATUS "Profiling build enabled")
+
+  add_compile_options(-g -fno-omit-frame-pointer)
+  add_link_options(-g -fno-omit-frame-pointer)
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(
+      WARNING
+        "For better profiling results, consider using RelWithDebInfo build type"
+    )
+  endif()
+endif()
+
 if(USE_CCACHE)
   find_program(CCACHE_PATH ccache)
   if(CCACHE_PATH)
@@ -25,33 +65,27 @@ endif()
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(Eigen3 REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(Sophus REQUIRED)
 find_package(g2o REQUIRED)
+
 find_package(rclcpp REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(PCL REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(Sophus REQUIRED)
+
 set(OrbbecSDK_DIR "/home/adrewn/OrbbecSDK")
 find_package(OrbbecSDK REQUIRED)
-
-# Set build type (repeat here for C++ only consumers)
-set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(third_party/find_dependencies.cmake)
 include(cmake/CompilerOptions.cmake)
 
 add_library(core SHARED)
-target_sources(core PRIVATE src/KeyframeSystem.cpp src/DepthTracker.cpp)
-target_link_libraries(core PUBLIC Eigen3::Eigen tsl::robin_map TBB::tbb
-                                     ${OpenCV_LIBS})
+target_sources(core PRIVATE src/KeyframeSystem.cpp src/DepthTracker.cpp
+                            src/Raycaster.cpp src/Scene.cpp src/Integrator.cpp)
+target_link_libraries(core PUBLIC Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
 
 target_include_directories(core PUBLIC include)
 set_global_target_properties(core)
@@ -63,10 +97,10 @@ set(all_headers
     /opt/ros/humble/include/tf2_ros /opt/ros/humble/include/tf2_msgs
     /opt/ros/humble/include/sensor_msgs /opt/ros/humble/include/message_filters)
 
-add_executable(visualizer test/test_visualizer.cpp )
+add_executable(visualizer test/test_visualizer.cpp)
 
 target_include_directories(visualizer PUBLIC include ${OpenCV_INCLUDE_DIRS}
-                                             ${all_headers} )
+                                             ${all_headers})
 
 target_link_directories(visualizer PUBLIC ${ROS_ROOT_DIR}/lib)
 
@@ -81,10 +115,26 @@ target_link_libraries(
          visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
          core)
 
-# add_library(synchronizer SHARED src/synchronizer.cpp src/imuKinematicObserver.cpp)
-# target_include_directories(synchronizer PUBLIC include)
-# target_link_libraries(synchronizer PUBLIC OrbbecSDK::OrbbecSDK ${OpenCV_LIBS} Sophus::Sophus)
+add_executable(test_scene test/test_scene.cpp src/Raycaster.cpp src/Scene.cpp
+                          src/Integrator.cpp)
 
-# add_executable(imuKinematicObserver test/test_imuKinematicObserver.cpp)
-# target_include_directories(imuKinematicObserver PUBLIC include)
-# target_link_libraries(imuKinematicObserver PRIVATE synchronizer)
+target_include_directories(test_scene PUBLIC include ${OpenCV_INCLUDE_DIRS})
+
+target_link_libraries(test_scene Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
+
+add_custom_target(
+  vtune
+  COMMAND echo "Running VTune profiling on test_scene..."
+  COMMAND vtune -collect hotspots -result-dir ./vtune_results ./test_scene
+  DEPENDS test_scene
+  COMMENT "Run Intel VTune Profiler"
+  VERBATIM)
+
+add_custom_target(
+  vtune-visualizer
+  COMMAND echo "Running VTune profiling on visualizer..."
+  COMMAND vtune -collect hotspots -result-dir ./vtune_visualizer_results
+          ./visualizer
+  DEPENDS visualizer
+  COMMENT "Run Intel VTune Profiler on visualizer"
+  VERBATIM)

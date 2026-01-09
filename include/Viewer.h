@@ -4,6 +4,7 @@
 #include <Types.h>
 
 // cpp
+#include <Eigen/Core>
 #include <cstddef>
 
 // opencv
@@ -28,6 +29,8 @@ public:
         ray_map_.resize(total_size, Eigen::Vector3f::Zero());
 
         const Eigen::Matrix3f inv_k = k.inverse();
+
+        // current_pose_ = prev_pose_ = Eigen::Matrix4f::Identity();
 
         for (int y = 0; y < height_; ++y)
             for (int x = 0; x < width_; ++x)
@@ -78,9 +81,9 @@ public:
         computePrevNormals();
     }
 
-    const Points& get_current_points() const { return current_points_; }
+    Points& get_current_points() { return current_points_; }
 
-    const Points& get_prev_points() const { return prev_points_; }
+    Points& get_prev_points() { return prev_points_; }
 
     const Normals& get_prev_normals() const { return prev_normals_; }
 
@@ -88,7 +91,6 @@ public:
 
     void set_tracking_result(TrackingResult result) { tracking_result_ = result; }
 
-private:
     void computePrevNormals() {
         Eigen::Vector3f* points_ptr = prev_points_.data();
         tbb::parallel_for(
@@ -141,6 +143,7 @@ private:
             });
     }
 
+private:
     Normals prev_normals_;
     Points prev_points_, current_points_;
 
@@ -151,6 +154,8 @@ private:
     std::vector<Eigen::Vector3f> ray_map_;
 
     TrackingResult tracking_result_{TrackingResult::GOOD};
+
+    // Eigen::Matrix4f current_pose_, prev_pose_;
 };
 }  // namespace ScanReconstruction
 #endif  // VIEWER_H_

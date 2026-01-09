@@ -11,6 +11,17 @@ struct GlobalSettings {
         static const auto tbb_control_settings = tbb::global_control(
             tbb::global_control::max_allowed_parallelism, static_cast<size_t>(max_num_threads));
     }
+
+    // 地圖參數:
+    //
+    float visiable_threshold;
+
+    // 最大權重
+    float max_weight;
+
+    // 截斷距離
+    float mu;
+
     // 相机参数
     // 视锥体范围
     float viewFrustum_max, viewFrustum_min;
@@ -24,10 +35,7 @@ struct GlobalSettings {
     float voxel_size;
 
     // 提前申请的体素块数量
-    int reverse_num;
-
-    // 体素块大小
-    int voxel_block_size;
+    int reverse_entries_num;
 
     // 关键帧系统参数:
     // 球面划分bin

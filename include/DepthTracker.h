@@ -21,7 +21,9 @@ public:
 
     void applyDelta(Eigen::Matrix4f& pose, const Eigen::Vector<float, 6>& delta);
 
-    Eigen::Matrix4f get_initial_guess_pose() { return last_pose_ * last_delta_; }
+    Eigen::Matrix4f get_initial_guess_pose() { return last_pose_; }
+
+    Eigen::Matrix4f get_last_pose() { return last_pose_; }
 
 private:
     struct LinearSystem {

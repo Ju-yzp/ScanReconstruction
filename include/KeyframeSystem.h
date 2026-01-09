@@ -1,6 +1,8 @@
 #ifndef KEYFRAME_SYSTEM_H_
 #define KEYFRAME_SYSTEM_H_
 
+#include <Types.h>
+
 // cpp
 #include <cstddef>
 #include <cstdint>
@@ -9,10 +11,6 @@
 #include <sophus/se3.hpp>
 
 namespace ScanReconstruction {
-
-using Normals = std::vector<Eigen::Vector3f>;
-using Points = std::vector<Eigen::Vector3f>;
-
 struct Histogram {
     std::vector<std::vector<uint32_t>> ndHistogram;
     Histogram(size_t n) { ndHistogram.resize(n, std::vector<uint32_t>(n, 0)); }

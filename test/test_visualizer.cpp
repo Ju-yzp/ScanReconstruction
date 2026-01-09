@@ -2,21 +2,24 @@
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
-
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
 #include <DepthTracker.h>
 #include <GlobalSettings.h>
+#include <Integrator.h>
+#include <Raycaster.h>
+#include <Scene.h>
 #include <Viewer.h>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+
 #include <cmath>
 #include <memory>
+
 #include <opencv2/opencv.hpp>
-#include "Types.h"
 
 using namespace ScanReconstruction;
 
@@ -49,18 +52,22 @@ public:
         global_settings_->pyramid_levels = 3;
         global_settings_->initial_lamdba = 1.0f;
         global_settings_->lamdba_scale = 5.0f;
-        global_settings_->viewFrustum_max = 4.0f;
-        global_settings_->viewFrustum_min = 0.15f;
-        global_settings_->voxel_size = 0.01f;
-        global_settings_->voxel_block_size = 8;
-        global_settings_->reverse_num = 100000;
         global_settings_->bin_num = 13;
         global_settings_->similarity_threshold = 0.5f;
-
+        global_settings_->reverse_entries_num = 1000000;
+        global_settings_->viewFrustum_max = 3.0f;
+        global_settings_->viewFrustum_min = 0.1f;
+        global_settings_->voxel_size = 0.005f;
+        global_settings_->mu = 0.02f;
+        global_settings_->max_weight = 100.0f;
         viewer_ = std::make_shared<Viewer>(
             global_settings_->height, global_settings_->width, global_settings_->k, 1000.0f);
 
         depth_tracker_ = std::make_shared<DepthTracker>(global_settings_);
+
+        raycaster_ = std::make_shared<Raycaster>(global_settings_);
+        scene_ = std::make_shared<Scene>(global_settings_);
+        integrator_ = std::make_shared<Integrator>(global_settings_);
 
         static auto static_tf_pub = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
         geometry_msgs::msg::TransformStamped map_tf;
@@ -95,10 +102,25 @@ private:
                 return;
             }
 
+            if (viewer_->get_tracking_result() == TrackingResult::POOR) {
+                RCLCPP_WARN(this->get_logger(), "Tracking poor!");
+                return;
+            }
+
+            RCLCPP_INFO(
+                this->get_logger(), "height %d width %d", depth_image.rows, depth_image.cols);
             viewer_->set_current_points(depth_image);
 
             if (is_initialized_ == false) {
-                viewer_->swap_current_and_previous_points();
+                raycaster_->allocateVoxelblocks(
+                    viewer_->get_current_points(), Eigen::Matrix4f::Identity(), scene_);
+                integrator_->integrateDepthIntoScene(
+                    viewer_->get_current_points(), Eigen::Matrix4f::Identity(),
+                    raycaster_->get_updated_hashEntries(), scene_);
+                raycaster_->reset_updated_hashEntries();
+                raycaster_->raycast(
+                    viewer_->get_prev_points(), Eigen::Matrix4f::Identity(), scene_);
+                viewer_->computePrevNormals();
                 is_initialized_ = true;
                 return;
             }
@@ -107,8 +129,14 @@ private:
             if (viewer_->get_tracking_result() == TrackingResult::GOOD) {
                 std::cout << "current pose :\n" << initial_pose << std::endl;
                 publish_tf_transform(initial_pose, "map", "camera", this->get_clock()->now());
-                viewer_->transform(initial_pose);
-                viewer_->swap_current_and_previous_points();
+                raycaster_->allocateVoxelblocks(
+                    viewer_->get_current_points(), initial_pose, scene_);
+                integrator_->integrateDepthIntoScene(
+                    viewer_->get_current_points(), initial_pose,
+                    raycaster_->get_updated_hashEntries(), scene_);
+                raycaster_->reset_updated_hashEntries();
+                raycaster_->raycast(viewer_->get_prev_points(), initial_pose, scene_);
+                viewer_->computePrevNormals();
             }
         }
     }
@@ -140,8 +168,10 @@ private:
 
     std::shared_ptr<Viewer> viewer_;
     std::shared_ptr<GlobalSettings> global_settings_;
-
     std::shared_ptr<DepthTracker> depth_tracker_;
+    std::shared_ptr<Scene> scene_;
+    std::shared_ptr<Integrator> integrator_;
+    std::shared_ptr<Raycaster> raycaster_;
 
     bool is_initialized_{false};
 };

@@ -1,54 +1,10 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
-#include <tsl/robin_growth_policy.h>
-#include <tsl/robin_map.h>
 #include <Eigen/Core>
 #include <cmath>
 
 namespace ScanReconstruction {
-
-// // 体素键
-// using VoxelKey = Eigen::Vector3i;
-
-// // 体素
-// struct Voxel {
-//     float weight{0.0f};
-//     float sdf{1.0f};
-// };
-
-// // 体素块
-// struct VoxelBlock {
-//     std::atomic<bool> state;
-//     std::shared_ptr<Voxel> data;
-// };
-
-// // 哈希函数
-// struct VoxelKeyHash {
-//     std::size_t operator()(const Eigen::Vector3i& v) const {
-//         size_t seed = 0;
-//         seed ^= std::hash<int>{}(v.x()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-//         seed ^= std::hash<int>{}(v.y()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-//         seed ^= std::hash<int>{}(v.z()) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-//         return seed;
-//     }
-// };
-
-// // 哈希键值比对函数
-// struct VoxelKeyEqual {
-//     bool operator()(const Eigen::Vector3i& a, const Eigen::Vector3i& b) const {
-//         return a.x() == b.x() && a.y() == b.y() && a.z() == b.z();
-//     }
-// };
-
-// // 体素哈希表
-// using VoxelMap = tsl::robin_map<
-//     VoxelKey, VoxelBlock, VoxelKeyHash, VoxelKeyEqual,
-//     std::allocator<std::pair<VoxelKey, VoxelBlock>>, false,
-//     tsl::rh::power_of_two_growth_policy<2>>;
-
-// 用于点云图或者法向量图
-using Map = std::vector<Eigen::Vector3f>;
 
 #ifndef MIN
 #define MIN(a, b) ((a < b) ? a : b)
