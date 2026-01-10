@@ -60,7 +60,7 @@ void Integrator::integrateDepthIntoScene(
                     float eta = point(2) - voxel_in_camera(2);
 
                     // 不在截断区域内,跳过不更新
-                    if (std::abs(eta) < mu_) continue;
+                    if (std::abs(eta) > mu_) continue;
 
                     // 更新sdf值
                     float old_sdf = current_voxel.get_sdf();

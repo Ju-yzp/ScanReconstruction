@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+add_compile_options(-march=native)
 add_compile_options(-msse4.2 -mavx2 -mfma)
 
 add_definitions(-DEIGEN_VECTORIZE_SSE42 -DEIGEN_VECTORIZE_AVX2)
@@ -115,8 +116,11 @@ target_link_libraries(
          visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
          core)
 
-add_executable(test_scene test/test_scene.cpp src/Raycaster.cpp src/Scene.cpp
-                          src/Integrator.cpp)
+add_executable(
+  test_scene
+  test/test_scene.cpp
+  # src/Raycaster.cpp src/Scene.cpp src/Integrator.cpp
+  src/Allocator.cpp)
 
 target_include_directories(test_scene PUBLIC include ${OpenCV_INCLUDE_DIRS})
 
