@@ -236,7 +236,7 @@ const Voxel Scene::readVoxel(Eigen::Vector3i point) {
 
     HashEntry* entry_ptr = &hash_entries_list[hashId];
     Eigen::Vector3i& pos = entry_ptr->pos;
-    while (pos(0) != blockPos(0) || pos(1) != blockPos(1) || pos(2) != blockPos(2)) {
+    while (pos != blockPos) {
         if (entry_ptr->offset == -1)
             return Voxel(std::numeric_limits<int16_t>::max(), std::numeric_limits<uint16_t>::min());
         entry_ptr = &hash_entries_list[entry_ptr->offset];

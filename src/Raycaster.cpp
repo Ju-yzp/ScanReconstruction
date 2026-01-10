@@ -78,10 +78,38 @@ void Raycaster::allocateVoxelblocks(
     }
 }
 
+inline Eigen::Vector3i get_block_indices_stable(const Eigen::Vector3f& pos) {
+    return Eigen::Vector3i(
+        static_cast<int>(std::floor(pos.x() * 0.125f)),
+        static_cast<int>(std::floor(pos.y() * 0.125f)),
+        static_cast<int>(std::floor(pos.z() * 0.125f)));
+}
+
+inline float get_block_step_distance_stable(
+    const Eigen::Vector3f& pos, const Eigen::Vector3f& invDir) {
+    float bx = std::floor(pos.x() * 0.125f) * 8.0f;
+    float by = std::floor(pos.y() * 0.125f) * 8.0f;
+    float bz = std::floor(pos.z() * 0.125f) * 8.0f;
+
+    float tx = ((invDir.x() > 0 ? bx + 8.0f : bx) - pos.x()) * invDir.x();
+    float ty = ((invDir.y() > 0 ? by + 8.0f : by) - pos.y()) * invDir.y();
+    float tz = ((invDir.z() > 0 ? bz + 8.0f : bz) - pos.z()) * invDir.z();
+
+    if (tx <= 0) tx = 1e10f;
+    if (ty <= 0) ty = 1e10f;
+    if (tz <= 0) tz = 1e10f;
+
+    return (std::min({tx, ty, tz}) * invDir).norm();
+}
+
+// inline float computeStepByBlock(
+//     const Eigen::Vector3f& start, const Eigen::Vector3f& invRay) {
+//         Eigen::Vector3f convert = start.cwiseAbs();
+//     }
+
 void Raycaster::raycast(
     Points& points, const Eigen::Matrix4f& camera_pose, std::shared_ptr<Scene> scene) {
     const Eigen::Matrix3f r = camera_pose.block(0, 0, 3, 3);
-    // const Eigen::Matrix3f inv_r = camera_pose.block(0, 0, 3, 3).inverse();
     const Eigen::Vector3f t = camera_pose.block(0, 3, 3, 1);
 
     const float oneOverVoxelSize = 1.0f / voxel_size_;
@@ -96,9 +124,55 @@ void Raycaster::raycast(
                 Eigen::Vector3f* points_ptr = points.data() + y * width_;
                 Eigen::Vector3f* ray_map_ptr = ray_map_.data() + y * width_;
                 for (int x = range.cols().begin(); x < range.cols().end(); ++x) {
-                    Eigen::Vector3f rayDirection = Eigen::Vector3f::Zero();
+                    // Eigen::Vector3f rayDirection = Eigen::Vector3f::Zero();
 
-                    float totalLenght = 0.0f, totalLenghtMax = 0.0f, stepLen = 0.0f;
+                    // float totalLenght = 0.0f, totalLenghtMax = 0.0f, stepLen = 0.0f;
+                    // const Eigen::Vector3f& temp = ray_map_ptr[x];
+                    // Eigen::Vector3f pointE = temp * viewFrustum_max_;
+
+                    // Eigen::Vector3f point_e = (r * pointE + t) * oneOverVoxelSize;
+
+                    // Eigen::Vector3f pointS = temp * viewFrustum_min_;
+                    // Eigen::Vector3f point_s = (r * pointS + t) * oneOverVoxelSize;
+
+                    // totalLenght = pointS.norm() * oneOverVoxelSize;
+                    // totalLenghtMax = pointE.norm() * oneOverVoxelSize;
+
+                    // rayDirection = point_e - point_s;
+                    // rayDirection.normalize();
+
+                    // Eigen::Vector3f pt_result = point_s;
+
+                    // float sdf_v = 0.0f;
+
+                    // bool pointFound{false};
+
+                    // while (totalLenght < totalLenghtMax) {
+                    //     sdf_v = scene->readFromSDFUninterpolated(pt_result);
+                    //     if (sdf_v < sdf_value_max && sdf_v > sdf_value_min)
+                    //         sdf_v = scene->readFromSDFInterpolated(pt_result);
+                    //     if (sdf_v < 0.0f) break;
+                    //     stepLen = std::max(sdf_v * step_scale, 1.0f);
+
+                    //     pt_result += stepLen * rayDirection;
+                    //     totalLenght += stepLen;
+                    // }
+
+                    // if (sdf_v < 0.0f) {
+                    //     stepLen = sdf_v * step_scale;
+                    //     pt_result += stepLen * rayDirection;
+
+                    //     sdf_v = scene->readWithConfidenceFromSDFInterpolated(pt_result);
+
+                    //     stepLen = sdf_v * step_scale;
+                    //     pt_result += stepLen * rayDirection;
+                    //     pointFound = true;
+                    // }
+
+                    // if (pointFound)
+                    //     points_ptr[x] = pt_result * voxel_size_;
+                    // else
+                    //     points_ptr[x](0) = std::numeric_limits<float>::quiet_NaN();
                     const Eigen::Vector3f& temp = ray_map_ptr[x];
                     Eigen::Vector3f pointE = temp * viewFrustum_max_;
 
@@ -106,45 +180,58 @@ void Raycaster::raycast(
 
                     Eigen::Vector3f pointS = temp * viewFrustum_min_;
                     Eigen::Vector3f point_s = (r * pointS + t) * oneOverVoxelSize;
+                    float start_t = point_s.norm();
+                    float totalLenght = pointS.norm() * oneOverVoxelSize;
+                    float totalLenghtMax = pointE.norm() * oneOverVoxelSize;
 
-                    totalLenght = pointS.norm() * oneOverVoxelSize;
-                    totalLenghtMax = pointE.norm() * oneOverVoxelSize;
-
-                    rayDirection = point_e - point_s;
-                    rayDirection.normalize();
+                    Eigen::Vector3f rayDirection = (point_e - point_s).normalized();
+                    Eigen::Vector3f invDir = rayDirection.cwiseInverse();
 
                     Eigen::Vector3f pt_result = point_s;
-
-                    float sdf_v = 0.0f;
-
+                    float sdf_v = 1.0f;
                     bool pointFound{false};
 
                     while (totalLenght < totalLenghtMax) {
-                        sdf_v = scene->readFromSDFUninterpolated(pt_result);
-                        if (sdf_v < sdf_value_max && sdf_v > sdf_value_min)
-                            sdf_v = scene->readFromSDFInterpolated(pt_result);
-                        if (sdf_v < 0.0f) break;
-                        stepLen = std::max(sdf_v * step_scale, 1.0f);
+                        Eigen::Vector3i blockPos = get_block_indices_stable(pt_result);
+                        const Voxel* voxel_block = scene->readVoxelBlock(blockPos);
 
-                        pt_result += stepLen * rayDirection;
-                        totalLenght += stepLen;
+                        float t_to_boundary = get_block_step_distance_stable(pt_result, invDir);
+
+                        if (voxel_block == nullptr) {
+                            float skip = t_to_boundary + 0.001f;
+                            totalLenght += skip;
+
+                            pt_result += skip * rayDirection;
+                            continue;
+                        }
+
+                        sdf_v = scene->readFromSDFUninterpolated(pt_result);
+                        if (sdf_v < sdf_value_max && sdf_v > sdf_value_min) {
+                            sdf_v = scene->readFromSDFInterpolated(pt_result);
+                        }
+
+                        if (sdf_v < 0.0f) {
+                            pointFound = true;
+                            break;
+                        }
+
+                        float sdf_step = std::max(sdf_v * step_scale, 1.0f);
+                        float safe_step = std::min(sdf_step, t_to_boundary + 0.001f);
+
+                        totalLenght += safe_step;
+                        pt_result = point_s + (totalLenght - start_t) * rayDirection;
                     }
 
-                    if (sdf_v < 0.0f) {
-                        stepLen = sdf_v * step_scale;
-                        pt_result += stepLen * rayDirection;
+                    if (pointFound) {
+                        pt_result += (sdf_v * step_scale) * rayDirection;
 
                         sdf_v = scene->readWithConfidenceFromSDFInterpolated(pt_result);
+                        pt_result += (sdf_v * step_scale) * rayDirection;
 
-                        stepLen = sdf_v * step_scale;
-                        pt_result += stepLen * rayDirection;
-                        pointFound = true;
-                    }
-
-                    if (pointFound)
                         points_ptr[x] = pt_result * voxel_size_;
-                    else
+                    } else {
                         points_ptr[x](0) = std::numeric_limits<float>::quiet_NaN();
+                    }
                 }
             }
         });
