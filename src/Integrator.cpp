@@ -30,9 +30,9 @@ void Integrator::integrateDepthIntoScene(
 
     Timer timer("integrate");
 
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, updated_entries.size()),
-        [&](const tbb::blocked_range<size_t>& range) {
+    oneapi::tbb::parallel_for(
+        oneapi::tbb::blocked_range<size_t>(0, updated_entries.size()),
+        [&](const oneapi::tbb::blocked_range<size_t>& range) {
             for (size_t id = range.begin(); id != range.end(); ++id) {
                 const HashEntry& current_hashEntry = updated_entries[id];
                 Voxel* current_voxel_block = scene->get_voxel_block(current_hashEntry.ptr);

@@ -59,10 +59,10 @@ void KeyframeSystem::computeKeyFrame(Normals& normals, Points& points, Keyframe&
     int end_row = height_ - int((float)height_ * 0.2f);
     int start_col = int((float)width_ * 0.2f);
     int end_col = width_ - int((float)width_ * 0.2f);
-    Histogram total_histogram = tbb::parallel_reduce(
-        tbb::blocked_range2d<int>(start_row, end_row, start_col, end_col),
+    Histogram total_histogram = oneapi::tbb::parallel_reduce(
+        oneapi::tbb::blocked_range2d<int>(start_row, end_row, start_col, end_col),
         Histogram(this->bin_num_),
-        [&](const tbb::blocked_range2d<int>& r, Histogram histogram) {
+        [&](const oneapi::tbb::blocked_range2d<int>& r, Histogram histogram) {
             for (int y = r.rows().begin(); y < r.rows().end(); ++y) {
                 const Eigen::Vector3f* points_ptr = points.data() + (y * width_);
                 const Eigen::Vector3f* normals_ptr = normals.data() + (y * width_);

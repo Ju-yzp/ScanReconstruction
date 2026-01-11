@@ -12,9 +12,10 @@
 #include <opencv2/opencv.hpp>
 
 // tbb
-#include <tbb/blocked_range2d.h>
-#include <tbb/info.h>
-#include <tbb/parallel_for.h>
+#include <oneapi/tbb/blocked_range2d.h>
+#include <oneapi/tbb/info.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
 
 namespace ScanReconstruction {
 
@@ -39,9 +40,9 @@ public:
     }
 
     void set_current_points(cv::Mat& origin_depth) {
-        tbb::parallel_for(
-            tbb::blocked_range2d<int>(0, height_, 0, width_),
-            [&](const tbb::blocked_range2d<int>& r) {
+        oneapi::tbb::parallel_for(
+            oneapi::tbb::blocked_range2d<int>(0, height_, 0, width_),
+            [&](const oneapi::tbb::blocked_range2d<int>& r) {
                 for (int y = r.rows().begin(); y < r.rows().end(); ++y) {
                     Eigen::Vector3f* points_ptr = current_points_.data() + (y * width_);
                     Eigen::Vector3f* ray_map_ptr = ray_map_.data() + (y * width_);
@@ -63,9 +64,9 @@ public:
         const Eigen::Matrix3f rotation = global_pose.block(0, 0, 3, 3);
         const Eigen::Vector3f translation = global_pose.block(0, 3, 3, 1);
 
-        tbb::parallel_for(
-            tbb::blocked_range2d<int>(0, height_, 0, width_),
-            [&](const tbb::blocked_range2d<int>& r) {
+        oneapi::tbb::parallel_for(
+            oneapi::tbb::blocked_range2d<int>(0, height_, 0, width_),
+            [&](const oneapi::tbb::blocked_range2d<int>& r) {
                 for (int y = r.rows().begin(); y < r.rows().end(); ++y) {
                     Eigen::Vector3f* points_ptr = current_points_.data() + y * width_;
                     for (int x = r.cols().begin(); x < r.cols().end(); ++x) {
@@ -93,9 +94,9 @@ public:
 
     void computePrevNormals() {
         Eigen::Vector3f* points_ptr = prev_points_.data();
-        tbb::parallel_for(
-            tbb::blocked_range2d<int>(3, height_ - 3, 3, width_ - 3),
-            [&](const tbb::blocked_range2d<int>& r) {
+        oneapi::tbb::parallel_for(
+            oneapi::tbb::blocked_range2d<int>(3, height_ - 3, 3, width_ - 3),
+            [&](const oneapi::tbb::blocked_range2d<int>& r) {
                 for (int y = r.rows().begin(); y < r.rows().end(); ++y) {
                     Eigen::Vector3f* normals_ptr = prev_normals_.data() + (y * width_);
                     for (int x = r.cols().begin(); x < r.cols().end(); ++x) {

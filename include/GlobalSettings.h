@@ -8,8 +8,9 @@
 namespace ScanReconstruction {
 struct GlobalSettings {
     void set_max_num_threads(int max_num_threads) {
-        static const auto tbb_control_settings = tbb::global_control(
-            tbb::global_control::max_allowed_parallelism, static_cast<size_t>(max_num_threads));
+        static const auto tbb_control_settings = oneapi::tbb::global_control(
+            oneapi::tbb::global_control::max_allowed_parallelism,
+            static_cast<size_t>(max_num_threads));
     }
 
     // 地圖參數:

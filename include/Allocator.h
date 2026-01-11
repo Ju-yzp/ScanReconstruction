@@ -26,10 +26,6 @@ constexpr int EXPANDED_VOXEL_BLOCK_SIZE3 = 1000;
 struct alignas(4) Voxel {
     short sdf;
     unsigned short depth_weight;
-    uint8_t red;
-    uint8_t green;
-    uint8_t bule;
-    uint8_t color_weight;
 };
 
 inline float shortToFloat(short sdf) {
@@ -63,44 +59,57 @@ static std::function<void(void*)> func = [](void* ptr) {
         Voxel& current_voxel = current_voxel_block[i];
         current_voxel.sdf = std::numeric_limits<short>::max();
         current_voxel.depth_weight = std::numeric_limits<unsigned short>::min();
-        current_voxel.red = current_voxel.green = current_voxel.bule = 0;
-        current_voxel.color_weight = 0;
     }
 };
 
-inline bool isValid(Eigen::Vector3i pos, int depth_limit) {
-    uint32_t boundary = 1U << depth_limit;
+const uint64_t MASK_X = 0x1249249249249249;
+const uint64_t MASK_Y = 0x2492492492492492;
+const uint64_t MASK_Z = 0x4924924924924924;
 
-    return (static_cast<uint32_t>(pos.x()) < boundary) &&
-           (static_cast<uint32_t>(pos.y()) < boundary) &&
-           (static_cast<uint32_t>(pos.z()) < boundary);
+inline bool isValid(const Eigen::Vector3i& pos, int depth_limit) {
+    int32_t boundary = 1 << depth_limit;
+    int32_t half = boundary >> 1;
+
+    auto check = [&](int v) { return v >= -half && v < half; };
+    return check(pos.x()) && check(pos.y()) && check(pos.z());
 }
 
-inline uint64_t encode(const Eigen::Vector3i& pos) {
-    uint64_t x = static_cast<uint64_t>(pos.x());
-    uint64_t y = static_cast<uint64_t>(pos.y());
-    uint64_t z = static_cast<uint64_t>(pos.z());
+inline uint64_t encode(const Eigen::Vector3i& pos, int depth_limit) {
+    uint64_t offset = 1ULL << (depth_limit - 1);
 
-    return _pdep_u64(x, 0x1249249249249249) | _pdep_u64(y, 0x2492492492492492) |
-           _pdep_u64(z, 0x4924924924924924);
+    uint64_t x = static_cast<uint64_t>(pos.x() + offset);
+    uint64_t y = static_cast<uint64_t>(pos.y() + offset);
+    uint64_t z = static_cast<uint64_t>(pos.z() + offset);
+
+    return _pdep_u64(x, MASK_X) | _pdep_u64(y, MASK_Y) | _pdep_u64(z, MASK_Z);
 }
 
-inline Eigen::Vector3i decode(uint64_t code) {
+inline Eigen::Vector3i decode(uint64_t code, int depth_limit) {
+    uint64_t offset = 1ULL << (depth_limit - 1);
+
+    uint64_t ux = _pext_u64(code, MASK_X);
+    uint64_t uy = _pext_u64(code, MASK_Y);
+    uint64_t uz = _pext_u64(code, MASK_Z);
+
     return Eigen::Vector3i(
-        static_cast<int>(_pext_u64(code, 0x1249249249249249)),
-        static_cast<int>(_pext_u64(code, 0x2492492492492492)),
-        static_cast<int>(_pext_u64(code, 0x4924924924924924)));
+        static_cast<int>(ux - offset), static_cast<int>(uy - offset),
+        static_cast<int>(uz - offset));
 }
 
 class Allocator {
 public:
     Allocator(size_t reversed_size, std::function<void(void*)>);
 
-    bool allocate(uint64_t code);
+    void allocate(std::vector<uint64_t>& codes);
 
-    Voxel* accessVoxelBlock(uint64_t code);
+    Voxel* accessVoxelBlock(const uint64_t& code);
 
-    bool hasAllocate(uint64_t code) const;
+    bool hasAllocate(const uint64_t& code) const;
+
+    bool isVaild(const uint64_t& code) {
+        if (code > static_cast<uint64_t>(reversed_size_)) return false;
+        return true;
+    }
 
 private:
     void* address_;
@@ -113,6 +122,21 @@ private:
 
     std::unique_ptr<std::atomic<uint64_t>[]> bit_map_;
 };
+
+inline float readSDFByVoxelBlock(const Voxel* voxel_block, Eigen::Vector3i position) {
+    position += Eigen::Vector3i(1, 1, 1);
+    return shortToFloat(voxel_block
+                            [position.x() + position.y() * EXPANDED_VOXEL_BLOCK_SIZE +
+                             position.z() * EXPANDED_VOXEL_BLOCK_SIZE * EXPANDED_VOXEL_BLOCK_SIZE]
+                                .sdf);
+}
+
+inline Voxel readVoxelByVoxelBlock(const Voxel* voxel_block, Eigen::Vector3i position) {
+    position += Eigen::Vector3i(1, 1, 1);
+    return voxel_block
+        [position.x() + position.y() * EXPANDED_VOXEL_BLOCK_SIZE +
+         position.z() * EXPANDED_VOXEL_BLOCK_SIZE * EXPANDED_VOXEL_BLOCK_SIZE];
+}
 
 class ReconstructionPipeline {
 public:
@@ -127,15 +151,27 @@ private:
 
     void integrate(const Points& points, const Eigen::Matrix4f& camera_pose);
 
-    void voxelDownSample(const Points& origin_points, Points& processed_points);
+    void voxelDownSample(
+        const Points& origin_points, Points& processed_points, Eigen::Matrix4f camera_pose);
 
-    float readFromSDFInterpolated(const Eigen::Vector3f& point);
+    float readFromSDFInterpolated(
+        const Eigen::Vector3f& point, const Eigen::Vector3i& blockPos,
+        const Voxel* current_voxel_block);
 
-    inline float readFromSDFUninterpolated(const Eigen::Vector3f& point) {
-        return shortToFloat(readVoxel(Eigen::Vector3i(point.array().floor().cast<int>())).sdf);
+    inline float readFromSDFUninterpolated(
+        const Eigen::Vector3f& point, const Eigen::Vector3i& blockPos,
+        const Voxel* current_voxel_block) {
+        return shortToFloat(
+            readVoxel(
+                Eigen::Vector3i(point.array().floor().cast<int>()), blockPos, current_voxel_block)
+                .sdf);
     }
 
-    const Voxel readVoxel(Eigen::Vector3i point);
+    inline const Voxel readVoxel(
+        Eigen::Vector3i point, const Eigen::Vector3i& blockPos, const Voxel* current_voxel_block) {
+        Eigen::Vector3i offset = point - blockPos * VOXEL_BLOCK_SIZE;
+        return readVoxelByVoxelBlock(current_voxel_block, offset);
+    }
 
     Allocator allcator_;
 

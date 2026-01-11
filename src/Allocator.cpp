@@ -1,8 +1,15 @@
 #include <Allocator.h>
 
+#define TBB_PREVIEW_TASK_ARENA_CONSTRAINTS_EXTENSION 1
+#include <oneapi/tbb/blocked_range2d.h>
+#include <oneapi/tbb/info.h>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
+
 #include <Types.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -11,12 +18,9 @@
 #include <unordered_set>
 
 // tbb
-#include <tbb/blocked_range.h>
-#include <tbb/blocked_range2d.h>
-#include <tbb/info.h>
-#include <tbb/parallel_for.h>
 #include <Eigen/Core>
 #include <cstddef>
+#include <vector>
 
 constexpr uint32_t SDF_HASH_MASK = 0xfffff;
 
@@ -32,14 +36,8 @@ namespace ScanReconstruction {
 Allocator::Allocator(size_t reversed_size, std::function<void(void*)> callback)
     : reversed_size_(reversed_size), initialize_callback_(callback) {
     page_size_ = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-    // address_ =
-    //     mmap(NULL, reversed_size_ * page_size_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0);
-    // if (address_ == MAP_FAILED)
-    //     throw std::runtime_error("Failed to allcate virtual memory that user need ");
-    page_size_ = static_cast<size_t>(sysconf(_SC_PAGESIZE));
     size_t total_bytes = reversed_size_ * page_size_;
 
-    // 調試打印，看看到底申請了多少
     std::cout << "Attempting to mmap: " << (total_bytes >> 30) << " GB of virtual memory."
               << std::endl;
 
@@ -48,7 +46,7 @@ Allocator::Allocator(size_t reversed_size, std::function<void(void*)> callback)
         0);
 
     if (address_ == MAP_FAILED) {
-        perror("mmap failed");  // 這會打印出系統具體的錯誤原因 (如 Out of memory)
+        perror("mmap failed");
         throw std::runtime_error("Failed to allocate virtual memory.");
     }
     size_t bitmap_size = (reversed_size + 63) >> 6;
@@ -57,22 +55,33 @@ Allocator::Allocator(size_t reversed_size, std::function<void(void*)> callback)
     for (size_t i = 0; i < bitmap_size; ++i) bit_map_[i].store(0, std::memory_order_relaxed);
 }
 
-bool Allocator::allocate(uint64_t code) {
-    if (code >= reversed_size_) return false;
-    uint64_t offset = code >> 6;
-    uint64_t bit_pos = code & 63;
-    uint64_t mask = (1ULL << bit_pos);
+void Allocator::allocate(std::vector<uint64_t>& codes) {
+    if (codes.empty()) return;
 
-    uint64_t old_val = bit_map_[offset].fetch_or(mask, std::memory_order_acq_rel);
+    std::sort(codes.begin(), codes.end());
 
-    if (!(old_val & mask)) {
-        initialize_callback_(static_cast<void*>((char*)address_ + code * page_size_));
-        return true;
+    for (uint64_t code : codes) {
+        if (code >= reversed_size_) continue;
+
+        uint64_t offset = code >> 6;
+        uint64_t bit_pos = code & 63;
+        uint64_t mask = (1ULL << bit_pos);
+
+        uint64_t old_val = bit_map_[offset].fetch_or(mask, std::memory_order_acq_rel);
+
+        if (!(old_val & mask)) {
+            void* addr = static_cast<void*>((char*)address_ + code * page_size_);
+
+            madvise(addr, page_size_, MADV_WILLNEED | MADV_HUGEPAGE);
+
+            static_cast<char*>(addr)[0] = 0;
+
+            initialize_callback_(addr);
+        }
     }
-    return false;
 }
 
-Voxel* Allocator::accessVoxelBlock(uint64_t code) {
+Voxel* Allocator::accessVoxelBlock(const uint64_t& code) {
     if (code > static_cast<uint64_t>(reversed_size_)) return nullptr;
     uint64_t offset = code >> 6;
     uint64_t bit_pos = code & 63;
@@ -86,7 +95,7 @@ Voxel* Allocator::accessVoxelBlock(uint64_t code) {
     }
 }
 
-bool Allocator::hasAllocate(uint64_t code) const {
+bool Allocator::hasAllocate(const uint64_t& code) const {
     if (code >= reversed_size_) return false;
     uint64_t offset = code >> 6;
     uint64_t bit_pos = code & 63;
@@ -151,98 +160,95 @@ inline float get_block_step_distance_stable(
     return (std::min({tx, ty, tz}) * invDir).norm();
 }
 
-inline float readSDFByVoxelBlock(const Voxel* voxel_block, Eigen::Vector3i position) {
-    position += Eigen::Vector3i(1, 1, 1);
-    return shortToFloat(voxel_block
-                            [position.x() + position.y() * EXPANDED_VOXEL_BLOCK_SIZE +
-                             position.z() * EXPANDED_VOXEL_BLOCK_SIZE * EXPANDED_VOXEL_BLOCK_SIZE]
-                                .sdf);
-}
-
-inline Voxel readVoxelByVoxelBlock(const Voxel* voxel_block, Eigen::Vector3i position) {
-    position += Eigen::Vector3i(1, 1, 1);
-    return voxel_block
-        [position.x() + position.y() * EXPANDED_VOXEL_BLOCK_SIZE +
-         position.z() * EXPANDED_VOXEL_BLOCK_SIZE * EXPANDED_VOXEL_BLOCK_SIZE];
-}
-
-void ReconstructionPipeline::raycast(Points& points, const Eigen::Matrix4f& camera_pose) {
+void ScanReconstruction::ReconstructionPipeline::raycast(
+    ScanReconstruction::Points& points, const Eigen::Matrix4f& camera_pose) {
     const Eigen::Matrix3f r = camera_pose.block(0, 0, 3, 3);
     const Eigen::Vector3f t = camera_pose.block(0, 3, 3, 1);
-
     const float oneOverVoxelSize = 1.0f / voxel_size_;
     const float step_scale = mu_ * oneOverVoxelSize;
     const float sdf_value_max = mu_ / voxel_size_ / 2.0f, sdf_value_min = -sdf_value_max;
 
-    tbb::parallel_for(
-        tbb::blocked_range2d<int>(0, height_, 10, 0, width_, 10),
-        [&](const tbb::blocked_range2d<int>& range) {
-            for (int y = range.rows().begin(); y < range.rows().end(); ++y) {
-                Eigen::Vector3f* points_ptr = points.data() + y * width_;
-                Eigen::Vector3f* ray_map_ptr = ray_map_.data() + y * width_;
-                for (int x = range.cols().begin(); x < range.cols().end(); ++x) {
-                    const Eigen::Vector3f& temp = ray_map_ptr[x];
-                    Eigen::Vector3f pointE = temp * viewFrustum_max_;
+    std::vector<tbb::core_type_id> core_types = tbb::info::core_types();
 
-                    Eigen::Vector3f point_e = (r * pointE + t) * oneOverVoxelSize;
+    tbb::task_arena::constraints constraints;
+    if (!core_types.empty()) {
+        constraints.set_core_type(core_types.back());
+        constraints.set_max_concurrency(tbb::info::default_concurrency(core_types.back()));
+    }
 
-                    Eigen::Vector3f pointS = temp * viewFrustum_min_;
-                    Eigen::Vector3f point_s = (r * pointS + t) * oneOverVoxelSize;
-                    float start_t = point_s.norm();
-                    float totalLenght = pointS.norm() * oneOverVoxelSize;
-                    float totalLenghtMax = pointE.norm() * oneOverVoxelSize;
+    tbb::task_arena arena(constraints);
+    arena.execute([&] {
+        tbb::parallel_for(
+            tbb::blocked_range2d<int>(0, height_, 0, width_),
+            [&](const tbb::blocked_range2d<int>& range) {
+                for (int y = range.rows().begin(); y < range.rows().end(); ++y) {
+                    Eigen::Vector3f* points_ptr = points.data() + y * width_;
+                    Eigen::Vector3f* ray_map_ptr = ray_map_.data() + y * width_;
+                    for (int x = range.cols().begin(); x < range.cols().end(); ++x) {
+                        const Eigen::Vector3f& temp = ray_map_ptr[x];
+                        Eigen::Vector3f pointE = temp * viewFrustum_max_;
+                        Eigen::Vector3f point_e = (r * pointE + t) * oneOverVoxelSize;
 
-                    Eigen::Vector3f rayDirection = (point_e - point_s).normalized();
-                    Eigen::Vector3f invDir = rayDirection.cwiseInverse();
+                        Eigen::Vector3f pointS = temp * viewFrustum_min_;
+                        Eigen::Vector3f point_s = (r * pointS + t) * oneOverVoxelSize;
 
-                    Eigen::Vector3f pt_result = point_s;
-                    float sdf_v = 1.0f;
-                    bool pointFound{false};
+                        float start_t = point_s.norm();
+                        float totalLenght = pointS.norm() * oneOverVoxelSize;
+                        float totalLenghtMax = pointE.norm() * oneOverVoxelSize;
 
-                    while (totalLenght < totalLenghtMax) {
-                        Eigen::Vector3i blockPos = get_block_indices_stable(pt_result);
-                        uint64_t code = encode(blockPos);
+                        Eigen::Vector3f rayDirection = (point_e - point_s).normalized();
+                        Eigen::Vector3f invDir = rayDirection.cwiseInverse();
 
-                        float t_to_boundary = get_block_step_distance_stable(pt_result, invDir);
+                        Eigen::Vector3f pt_result = point_s;
+                        float sdf_v = 1.0f;
+                        bool pointFound{false};
+                        Eigen::Vector3i last_blockPos = Eigen::Vector3i::Zero(), blockPos;
+                        uint64_t code = 0;
+                        Voxel* current_voxel_block = nullptr;
 
-                        if (!isValid(blockPos, depth_limit_) || !allcator_.hasAllocate(code)) {
-                            float skip = t_to_boundary + 0.001f;
-                            totalLenght += skip;
-
-                            pt_result += skip * rayDirection;
-                            continue;
+                        while (totalLenght < totalLenghtMax) {
+                            blockPos = get_block_indices_stable(pt_result);
+                            if (last_blockPos != blockPos) {
+                                code = encode(blockPos, depth_limit_);
+                                last_blockPos = blockPos;
+                                current_voxel_block = allcator_.accessVoxelBlock(code);
+                            }
+                            float t_to_boundary = get_block_step_distance_stable(pt_result, invDir);
+                            if (!isValid(blockPos, depth_limit_) || !allcator_.hasAllocate(code)) {
+                                float skip = t_to_boundary + 0.001f;
+                                totalLenght += skip;
+                                pt_result += skip * rayDirection;
+                                continue;
+                            }
+                            sdf_v =
+                                readFromSDFUninterpolated(pt_result, blockPos, current_voxel_block);
+                            if (sdf_v < sdf_value_max && sdf_v > sdf_value_min) {
+                                sdf_v = readFromSDFInterpolated(
+                                    pt_result, blockPos, current_voxel_block);
+                            }
+                            if (sdf_v < 0.0f) {
+                                pointFound = true;
+                                break;
+                            }
+                            float sdf_step = std::max(sdf_v * step_scale, 1.0f);
+                            float safe_step = std::min(sdf_step, t_to_boundary + 0.001f);
+                            totalLenght += safe_step;
+                            pt_result = point_s + (totalLenght - start_t) * rayDirection;
                         }
 
-                        sdf_v = readFromSDFUninterpolated(pt_result);
-                        if (sdf_v < sdf_value_max && sdf_v > sdf_value_min) {
-                            sdf_v = readFromSDFInterpolated(pt_result);
+                        if (pointFound) {
+                            pt_result += (sdf_v * step_scale) * rayDirection;
+                            sdf_v =
+                                readFromSDFInterpolated(pt_result, blockPos, current_voxel_block);
+                            pt_result += (sdf_v * step_scale) * rayDirection;
+                            points_ptr[x] = pt_result * voxel_size_;
+                        } else {
+                            points_ptr[x](0) = std::numeric_limits<float>::quiet_NaN();
                         }
-
-                        if (sdf_v < 0.0f) {
-                            pointFound = true;
-                            break;
-                        }
-
-                        float sdf_step = std::max(sdf_v * step_scale, 1.0f);
-                        float safe_step = std::min(sdf_step, t_to_boundary + 0.001f);
-
-                        totalLenght += safe_step;
-                        pt_result = point_s + (totalLenght - start_t) * rayDirection;
-                    }
-
-                    if (pointFound) {
-                        pt_result += (sdf_v * step_scale) * rayDirection;
-
-                        sdf_v = readFromSDFInterpolated(pt_result);
-                        pt_result += (sdf_v * step_scale) * rayDirection;
-
-                        points_ptr[x] = pt_result * voxel_size_;
-                    } else {
-                        points_ptr[x](0) = std::numeric_limits<float>::quiet_NaN();
                     }
                 }
-            }
-        });
+            });
+    });
 }
 
 void ReconstructionPipeline::allocateMemoryForVoxels(
@@ -252,14 +258,15 @@ void ReconstructionPipeline::allocateMemoryForVoxels(
 
     const float oneOverVoxelSize = 1.0f / (voxel_size_ * VOXEL_BLOCK_SIZE);
     Points downsample_points;
-    voxelDownSample(points, downsample_points);
+    voxelDownSample(points, downsample_points, camera_pose);
 
+    std::unordered_set<uint64_t> filter_allocated;
+    std::vector<uint64_t> need_allocate_list;
     for (auto& point : downsample_points) {
         int nstep = 0;
         float norm = 0.0f;
 
         Eigen::Vector3f point_in_camera = point, direction;
-        if (std::isnan(point_in_camera(0))) continue;
         norm = point_in_camera.norm();
 
         Eigen::Vector3f point_s =
@@ -277,27 +284,32 @@ void ReconstructionPipeline::allocateMemoryForVoxels(
                 (int)std::floor(point_s(2)));
 
             if (isValid(blockPos, depth_limit_)) {
-                uint64_t code = encode(blockPos);
-                if (allcator_.allocate(code)) {
-                    updated_list_.emplace_back(code);
-                }
+                uint64_t code = encode(blockPos, depth_limit_);
+                updated_list_.emplace_back(code);
+                if (!allcator_.hasAllocate(code) && filter_allocated.insert(code).second)
+                    need_allocate_list.emplace_back(code);
             }
             point_s += direction;
         }
     }
+
+    allcator_.allocate(need_allocate_list);
 }
 
 void ReconstructionPipeline::integrate(const Points& points, const Eigen::Matrix4f& camera_pose) {
     const Eigen::Matrix3f r = camera_pose.block(0, 0, 3, 3).transpose();
     const Eigen::Vector3f t = camera_pose.block(0, 3, 3, 1);
 
-    Timer timer("integrator");
-    tbb::parallel_for(
-        tbb::blocked_range<size_t>(0, updated_list_.size()),
-        [&](const tbb::blocked_range<size_t>& range) {
+    // Timer timer("integrator");
+    std::sort(
+        updated_list_.begin(), updated_list_.end(), [](uint64_t a, uint64_t b) { return b > a; });
+    oneapi::tbb::parallel_for(
+        oneapi::tbb::blocked_range<size_t>(0, updated_list_.size()),
+        [&](const oneapi::tbb::blocked_range<size_t>& range) {
             for (size_t id = range.begin(); id != range.end(); ++id) {
-                Eigen::Vector3i blockPos = decode(updated_list_[id]);
+                Eigen::Vector3i blockPos = decode(updated_list_[id], depth_limit_);
                 Voxel* current_voxel_block = allcator_.accessVoxelBlock(updated_list_[id]);
+                if (!current_voxel_block) continue;
                 for (size_t i = 0; i < coord_offsets_.size(); ++i) {
                     const Eigen::Vector3i& offset = coord_offsets_[i];
                     int localId =
@@ -345,18 +357,19 @@ void ReconstructionPipeline::integrate(const Points& points, const Eigen::Matrix
 }
 
 void ReconstructionPipeline::voxelDownSample(
-    const Points& origin_points, Points& processed_points) {
+    const Points& origin_points, Points& processed_points, Eigen::Matrix4f camera_pose) {
     processed_points.clear();
     processed_points.reserve(origin_points.size() >> 4);
+    const Eigen::Matrix3f r = camera_pose.block(0, 0, 3, 3);
+    const Eigen::Vector3f t = camera_pose.block(0, 3, 3, 1);
     std::unordered_set<Eigen::Vector3i, Vector3iHash> voxel_map;
     voxel_map.reserve(static_cast<size_t>(std::pow(viewFrustum_max_ / voxel_size_, 2) / 2.0f));
-    const float oneOverVoxelSize = 1.0f / (voxel_size_ * VOXEL_BLOCK_SIZE);
+    const float oneOverVoxelSize = 1.0f / (voxel_size_ * VOXEL_BLOCK_SIZE * 0.7f);
     for (const auto& p : origin_points) {
         if (std::isnan(p(0))) continue;
-        const Eigen::Vector3i coord = (p.array() * oneOverVoxelSize).floor().cast<int>();
-        if (voxel_map.insert(coord).second) {
-            processed_points.push_back(p);
-        }
+        Eigen::Vector3f tmp = r * p + t;
+        const Eigen::Vector3i coord = (tmp.array() * oneOverVoxelSize).floor().cast<int>();
+        if (voxel_map.insert(coord).second) processed_points.push_back(p);
     }
 }
 
@@ -370,7 +383,10 @@ inline Eigen::Vector3i posToBlockPos(Eigen::Vector3i& point) {
     return Eigen::Vector3i(point.x() >> 3, point.y() >> 3, point.z() >> 3);
 }
 
-float ReconstructionPipeline::readFromSDFInterpolated(const Eigen::Vector3f& point) {
+float ReconstructionPipeline::readFromSDFInterpolated(
+    const Eigen::Vector3f& point, const Eigen::Vector3i& blockPos,
+    const Voxel* current_voxel_block) {
+    if (!current_voxel_block) return 1.0f;
     Eigen::Vector3f coeff;
     Eigen::Vector3i position = IntToFloor(point, coeff);
 
@@ -378,14 +394,6 @@ float ReconstructionPipeline::readFromSDFInterpolated(const Eigen::Vector3f& poi
     const float cx = coeff(0);
     const float cy = coeff(1);
     const float cz = coeff(2);
-
-    Eigen::Vector3i blockPos = posToBlockPos(position);
-    if (!isValid(blockPos, depth_limit_)) return 1.0f;
-    uint64_t code = encode(blockPos);
-    const Voxel* current_voxel_block = allcator_.accessVoxelBlock(code);
-    if (current_voxel_block == nullptr) {
-        return 1.0f;
-    }
 
     Eigen::Vector3i offset = position - blockPos * VOXEL_BLOCK_SIZE;
     v1 = readSDFByVoxelBlock(current_voxel_block, offset);
@@ -407,19 +415,4 @@ float ReconstructionPipeline::readFromSDFInterpolated(const Eigen::Vector3f& poi
     return (1.0f - cz) * res1 + cz * res2;
 }
 
-const Voxel ReconstructionPipeline::readVoxel(Eigen::Vector3i point) {
-    Eigen::Vector3i blockPos = posToBlockPos(point);
-    if (!isValid(blockPos, depth_limit_))
-        return Voxel(
-            std::numeric_limits<int16_t>::max(), std::numeric_limits<uint16_t>::min(), 0, 0, 0, 0);
-    uint64_t code = encode(blockPos);
-    const Voxel* current_voxel_block = allcator_.accessVoxelBlock(code);
-    if (current_voxel_block == nullptr) {
-        return Voxel(
-            std::numeric_limits<int16_t>::max(), std::numeric_limits<uint16_t>::min(), 0, 0, 0, 0);
-    }
-
-    Eigen::Vector3i offset = point - blockPos * VOXEL_BLOCK_SIZE;
-    return readVoxelByVoxelBlock(current_voxel_block, offset);
-}
 }  // namespace ScanReconstruction

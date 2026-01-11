@@ -117,9 +117,9 @@ void Raycaster::raycast(
     const float sdf_value_max = mu_ / voxel_size_ / 2.0f, sdf_value_min = -sdf_value_max;
 
     Timer timer("raycast");
-    tbb::parallel_for(
-        tbb::blocked_range2d<int>(0, height_, 10, 0, width_, 10),
-        [&](const tbb::blocked_range2d<int>& range) {
+    oneapi::tbb::parallel_for(
+        oneapi::tbb::blocked_range2d<int>(0, height_, 10, 0, width_, 10),
+        [&](const oneapi::tbb::blocked_range2d<int>& range) {
             for (int y = range.rows().begin(); y < range.rows().end(); ++y) {
                 Eigen::Vector3f* points_ptr = points.data() + y * width_;
                 Eigen::Vector3f* ray_map_ptr = ray_map_.data() + y * width_;

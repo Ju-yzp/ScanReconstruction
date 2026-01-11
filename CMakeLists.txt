@@ -83,44 +83,42 @@ find_package(OrbbecSDK REQUIRED)
 include(third_party/find_dependencies.cmake)
 include(cmake/CompilerOptions.cmake)
 
-add_library(core SHARED)
-target_sources(core PRIVATE src/KeyframeSystem.cpp src/DepthTracker.cpp
-                            src/Raycaster.cpp src/Scene.cpp src/Integrator.cpp)
-target_link_libraries(core PUBLIC Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
+# add_library(core SHARED) target_sources(core PRIVATE src/KeyframeSystem.cpp
+# src/DepthTracker.cpp src/Raycaster.cpp src/Scene.cpp src/Integrator.cpp)
+# target_link_libraries(core PUBLIC Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
 
-target_include_directories(core PUBLIC include)
-set_global_target_properties(core)
+# target_include_directories(core PUBLIC include)
+# set_global_target_properties(core)
 
-set(ROS_ROOT_DIR /opt/ros/humble)
+# set(ROS_ROOT_DIR /opt/ros/humble)
 
-set(all_headers
-    /opt/ros/humble/include /opt/ros/humble/include/cv_bridge
-    /opt/ros/humble/include/tf2_ros /opt/ros/humble/include/tf2_msgs
-    /opt/ros/humble/include/sensor_msgs /opt/ros/humble/include/message_filters)
+# set(all_headers /opt/ros/humble/include /opt/ros/humble/include/cv_bridge
+# /opt/ros/humble/include/tf2_ros /opt/ros/humble/include/tf2_msgs
+# /opt/ros/humble/include/sensor_msgs /opt/ros/humble/include/message_filters)
 
-add_executable(visualizer test/test_visualizer.cpp)
+# add_executable(visualizer test/test_visualizer.cpp)
 
-target_include_directories(visualizer PUBLIC include ${OpenCV_INCLUDE_DIRS}
-                                             ${all_headers})
+# target_include_directories(visualizer PUBLIC include ${OpenCV_INCLUDE_DIRS}
+# ${all_headers})
 
-target_link_directories(visualizer PUBLIC ${ROS_ROOT_DIR}/lib)
+# target_link_directories(visualizer PUBLIC ${ROS_ROOT_DIR}/lib)
 
-target_link_libraries(
-  visualizer
-  PUBLIC cv_bridge
-         tf2_ros
-         tf2_msgs__rosidl_typesupport_cpp
-         sensor_msgs__rosidl_typesupport_cpp
-         rclcpp::rclcpp
-         cv_bridge::cv_bridge
-         visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
-         core)
+# target_link_libraries( visualizer PUBLIC cv_bridge tf2_ros
+# tf2_msgs__rosidl_typesupport_cpp sensor_msgs__rosidl_typesupport_cpp
+# rclcpp::rclcpp cv_bridge::cv_bridge
+# visualization_msgs::visualization_msgs__rosidl_typesupport_cpp core)
 
 add_executable(
   test_scene
   test/test_scene.cpp
   # src/Raycaster.cpp src/Scene.cpp src/Integrator.cpp
   src/Allocator.cpp)
+
+target_compile_definitions(
+  test_scene PRIVATE TBB_PREVIEW_TASK_ARENA_CONSTRAINTS_EXTENSION=1)
+
+set_target_properties(test_scene PROPERTIES CXX_STANDARD 20
+                                            CXX_STANDARD_REQUIRED ON)
 
 target_include_directories(test_scene PUBLIC include ${OpenCV_INCLUDE_DIRS})
 
@@ -134,11 +132,7 @@ add_custom_target(
   COMMENT "Run Intel VTune Profiler"
   VERBATIM)
 
-add_custom_target(
-  vtune-visualizer
-  COMMAND echo "Running VTune profiling on visualizer..."
-  COMMAND vtune -collect hotspots -result-dir ./vtune_visualizer_results
-          ./visualizer
-  DEPENDS visualizer
-  COMMENT "Run Intel VTune Profiler on visualizer"
-  VERBATIM)
+# add_custom_target( vtune-visualizer COMMAND echo "Running VTune profiling on
+# visualizer..." COMMAND vtune -collect hotspots -result-dir
+# ./vtune_visualizer_results ./visualizer DEPENDS visualizer COMMENT "Run Intel
+# VTune Profiler on visualizer" VERBATIM)

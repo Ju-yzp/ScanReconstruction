@@ -155,9 +155,9 @@ DepthTracker::LinearSystem DepthTracker::buuildLinearSystem(
         return a;
     };
 
-    LinearSystem total = tbb::parallel_reduce(
-        tbb::blocked_range2d<int>(0, height, 0, width), LinearSystem(),
-        [&](const tbb::blocked_range2d<int>& r, LinearSystem local_sum) {
+    LinearSystem total = oneapi::tbb::parallel_reduce(
+        oneapi::tbb::blocked_range2d<int>(0, height, 0, width), LinearSystem(),
+        [&](const oneapi::tbb::blocked_range2d<int>& r, LinearSystem local_sum) {
             for (int y = r.rows().begin(); y < r.rows().end(); ++y)
                 for (int x = r.cols().begin(); x < r.cols().end(); ++x)
                     local_sum = sum_linear_systems(local_sum, compute_jacobian_and_residual(x, y));

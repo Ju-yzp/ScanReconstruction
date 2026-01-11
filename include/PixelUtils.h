@@ -22,9 +22,9 @@ inline void filterSubsampleWithHoles(
 
     const Eigen::Vector3f* input_ptr = input.data();
 
-    tbb::parallel_for(
-        tbb::blocked_range2d<int>(0, output_rows, 0, output_cols),
-        [&](const tbb::blocked_range2d<int>& r) {
+    oneapi::tbb::parallel_for(
+        oneapi::tbb::blocked_range2d<int>(0, output_rows, 0, output_cols),
+        [&](const oneapi::tbb::blocked_range2d<int>& r) {
             for (int y = r.rows().begin(); y < r.rows().end(); ++y) {
                 Eigen::Vector3f* output_ptr = output.data() + (y * output_cols);
                 for (int x = r.cols().begin(); x < r.cols().end(); ++x) {
