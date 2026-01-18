@@ -60,10 +60,10 @@ inline void filterSubsampleWithHoles(
 }
 
 inline Eigen::Vector3f interpolateBilinear_withHoles(
-    std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>& input,
+    const std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>& input,
     Eigen::Vector2f coorinate, int cols) {
     Eigen::Vector2i imgPoint((int)floor(coorinate(0)), (int)floor(coorinate(1)));
-    Eigen::Vector3f* input_ptr = input.data();
+    const Eigen::Vector3f* input_ptr = input.data();
     auto a = input_ptr[imgPoint(0) + imgPoint(1) * cols];
     auto b = input_ptr[imgPoint(0) + 1 + imgPoint(1) * cols];
     auto c = input_ptr[imgPoint(0) + (imgPoint(1) + 1) * cols];
@@ -85,8 +85,6 @@ inline Eigen::Vector3f interpolateBilinear_withHoles(
     result(2) = a(2) * (1.0f - delta(0)) * (1.0f - delta(1)) + b(2) * delta(0) * (1.0f - delta(1)) +
                 c(2) * (1.0f - delta(0)) * delta(1) + d(2) * delta(0) * delta(1);
 
-    result(3) = a(3) * (1.0f - delta(0)) * (1.0f - delta(1)) + b(3) * delta(0) * (1.0f - delta(1)) +
-                c(3) * (1.0f - delta(0)) * delta(1) + d(3) * delta(0) * delta(1);
     return result;
 }
 }  // namespace ScanReconstruction

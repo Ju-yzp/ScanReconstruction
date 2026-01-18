@@ -40,5 +40,3 @@ endfunction()
 
 find_external_dependency("TBB" "TBB::tbb"
                          "${CMAKE_CURRENT_LIST_DIR}/tbb/tbb.cmake")
-find_external_dependency("tsl-robin-map" "tsl::robin_map"
-                         "${CMAKE_CURRENT_LIST_DIR}/tsl_robin/tsl_robin.cmake")

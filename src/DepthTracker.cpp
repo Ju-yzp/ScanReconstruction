@@ -189,7 +189,7 @@ void DepthTracker::track(std::shared_ptr<Viewer> viewer, Eigen::Matrix4f& initia
                 camera_params_pyramids_[(size_t)current_level],
                 space_threhold_pyramids_[(size_t)current_level]);
 
-            if (linearSystem.valid < 1) {
+            if (linearSystem.valid < 10) {
                 viewer->set_tracking_result(TrackingResult::LOST);
                 return;
             }

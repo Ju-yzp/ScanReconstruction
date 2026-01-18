@@ -1,4 +1,5 @@
 #include <Allocator.h>
+#include "Octree.h"
 
 #define TBB_PREVIEW_TASK_ARENA_CONSTRAINTS_EXTENSION 1
 #include <oneapi/tbb/blocked_range2d.h>
@@ -6,6 +7,7 @@
 #include <oneapi/tbb/parallel_for.h>
 #include <oneapi/tbb/task_arena.h>
 
+#include <PixelUtils.h>
 #include <Types.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -33,89 +35,15 @@ struct Vector3iHash {
 };
 
 namespace ScanReconstruction {
-Allocator::Allocator(size_t reversed_size, std::function<void(void*)> callback)
-    : reversed_size_(reversed_size), initialize_callback_(callback) {
-    page_size_ = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-    size_t total_bytes = reversed_size_ * page_size_;
 
-    std::cout << "Attempting to mmap: " << (total_bytes >> 30) << " GB of virtual memory."
-              << std::endl;
-
-    address_ = mmap(
-        NULL, total_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1,
-        0);
-
-    if (address_ == MAP_FAILED) {
-        perror("mmap failed");
-        throw std::runtime_error("Failed to allocate virtual memory.");
-    }
-    size_t bitmap_size = (reversed_size + 63) >> 6;
-    bit_map_ = std::make_unique<std::atomic<uint64_t>[]>(bitmap_size);
-
-    for (size_t i = 0; i < bitmap_size; ++i) bit_map_[i].store(0, std::memory_order_relaxed);
-}
-
-void Allocator::allocate(std::vector<uint64_t>& codes) {
-    if (codes.empty()) return;
-
-    std::sort(codes.begin(), codes.end());
-
-    for (uint64_t code : codes) {
-        if (code >= reversed_size_) continue;
-
-        uint64_t offset = code >> 6;
-        uint64_t bit_pos = code & 63;
-        uint64_t mask = (1ULL << bit_pos);
-
-        uint64_t old_val = bit_map_[offset].fetch_or(mask, std::memory_order_acq_rel);
-
-        if (!(old_val & mask)) {
-            void* addr = static_cast<void*>((char*)address_ + code * page_size_);
-
-            madvise(addr, page_size_, MADV_WILLNEED | MADV_HUGEPAGE);
-
-            static_cast<char*>(addr)[0] = 0;
-
-            initialize_callback_(addr);
-        }
-    }
-}
-
-Voxel* Allocator::accessVoxelBlock(const uint64_t& code) {
-    if (code > static_cast<uint64_t>(reversed_size_)) return nullptr;
-    uint64_t offset = code >> 6;
-    uint64_t bit_pos = code & 63;
-    uint64_t mask = (1ULL << bit_pos);
-    if (bit_map_[offset].load(std::memory_order_acquire) & mask)
-        return reinterpret_cast<Voxel*>((char*)address_ + code * page_size_);
-    else {
-        // std::cout << "User access virtual memory that had no allcate pysiphy memory" <<
-        // std::endl;
-        return nullptr;
-    }
-}
-
-bool Allocator::hasAllocate(const uint64_t& code) const {
-    if (code >= reversed_size_) return false;
-    uint64_t offset = code >> 6;
-    uint64_t bit_pos = code & 63;
-    uint64_t mask = (1ULL << bit_pos);
-
-    return (bit_map_[offset].load(std::memory_order_acquire) & mask) != 0;
-}
-
-ReconstructionPipeline::ReconstructionPipeline(
-    std::shared_ptr<GlobalSettings> global_settings, int depth_limit)
-    : allcator_(static_cast<size_t>(pow(2, depth_limit * 3)), func),
-      mu_(global_settings->mu),
+ReconstructionPipeline::ReconstructionPipeline(std::shared_ptr<GlobalSettings> global_settings)
+    : mu_(global_settings->mu),
       max_weight_(global_settings->max_weight),
       voxel_size_(global_settings->voxel_size),
       height_(global_settings->height),
       width_(global_settings->width),
       k_(global_settings->k),
-      viewFrustum_max_(global_settings->viewFrustum_max),
-      viewFrustum_min_(global_settings->viewFrustum_min),
-      depth_limit_(depth_limit) {
+      viewFrustum_max_(global_settings->viewFrustum_max) {
     if (mu_ / voxel_size_ < 2.0f) throw std::runtime_error("mu must larger than voxel size");
     const Eigen::Matrix3f inv_k = k_.inverse();
 
@@ -128,10 +56,12 @@ ReconstructionPipeline::ReconstructionPipeline(
         for (int y = 0; y < EXPANDED_VOXEL_BLOCK_SIZE; ++y)
             for (int z = 0; z < EXPANDED_VOXEL_BLOCK_SIZE; ++z)
                 coord_offsets_.emplace_back(Eigen::Vector3i(x, y, z));
+    tree_ = new Octree;
 }
 
-void ReconstructionPipeline::fusion(const Points& points, const Eigen::Matrix4f& camera_pose) {
-    allocateMemoryForVoxels(points, camera_pose);
+void ReconstructionPipeline::fusion(
+    const Points& points, const Eigen::Matrix4f& camera_pose, bool allocate) {
+    allocateMemoryForVoxels(points, camera_pose, allocate);
     integrate(points, camera_pose);
     updated_list_.clear();
 }
@@ -157,7 +87,7 @@ inline float get_block_step_distance_stable(
     if (ty <= 0) ty = 1e10f;
     if (tz <= 0) tz = 1e10f;
 
-    return (std::min({tx, ty, tz}) * invDir).norm();
+    return std::min({tx, ty, tz});
 }
 
 void ScanReconstruction::ReconstructionPipeline::raycast(
@@ -208,18 +138,20 @@ void ScanReconstruction::ReconstructionPipeline::raycast(
 
                         while (totalLenght < totalLenghtMax) {
                             blockPos = get_block_indices_stable(pt_result);
-                            if (last_blockPos != blockPos) {
-                                code = encode(blockPos, depth_limit_);
-                                last_blockPos = blockPos;
-                                current_voxel_block = allcator_.accessVoxelBlock(code);
-                            }
                             float t_to_boundary = get_block_step_distance_stable(pt_result, invDir);
-                            if (!isValid(blockPos, depth_limit_) || !allcator_.hasAllocate(code)) {
-                                float skip = t_to_boundary + 0.001f;
-                                totalLenght += skip;
+                            if (!isValid(blockPos)) {
+                                float skip = (t_to_boundary + 0.001f);
+                                totalLenght += (skip * rayDirection).norm();
                                 pt_result += skip * rayDirection;
                                 continue;
                             }
+
+                            if (last_blockPos != blockPos) {
+                                code = encode(blockPos);
+                                last_blockPos = blockPos;
+                                current_voxel_block = tree_->has_leaf_node(code);
+                            }
+
                             sdf_v =
                                 readFromSDFUninterpolated(pt_result, blockPos, current_voxel_block);
                             if (sdf_v < sdf_value_max && sdf_v > sdf_value_min) {
@@ -252,16 +184,16 @@ void ScanReconstruction::ReconstructionPipeline::raycast(
 }
 
 void ReconstructionPipeline::allocateMemoryForVoxels(
-    const Points& points, const Eigen::Matrix4f& camera_pose) {
+    const Points& points, const Eigen::Matrix4f& camera_pose, bool allocate) {
     const Eigen::Matrix3f r = camera_pose.block(0, 0, 3, 3);
     const Eigen::Vector3f t = camera_pose.block(0, 3, 3, 1);
 
+    std::unordered_set<uint64_t> filter_allocated;
+    std::vector<uint64_t> need_allocate_list;
     const float oneOverVoxelSize = 1.0f / (voxel_size_ * VOXEL_BLOCK_SIZE);
     Points downsample_points;
     voxelDownSample(points, downsample_points, camera_pose);
 
-    std::unordered_set<uint64_t> filter_allocated;
-    std::vector<uint64_t> need_allocate_list;
     for (auto& point : downsample_points) {
         int nstep = 0;
         float norm = 0.0f;
@@ -283,17 +215,16 @@ void ReconstructionPipeline::allocateMemoryForVoxels(
                 (int)std::floor(point_s(0)), (int)std::floor(point_s(1)),
                 (int)std::floor(point_s(2)));
 
-            if (isValid(blockPos, depth_limit_)) {
-                uint64_t code = encode(blockPos, depth_limit_);
+            if (isValid(blockPos)) {
+                uint64_t code = encode(blockPos);
                 updated_list_.emplace_back(code);
-                if (!allcator_.hasAllocate(code) && filter_allocated.insert(code).second)
+                if (!tree_->has_leaf_node(code) && filter_allocated.insert(code).second)
                     need_allocate_list.emplace_back(code);
             }
             point_s += direction;
         }
     }
-
-    allcator_.allocate(need_allocate_list);
+    if (allocate) tree_->add_nodes(need_allocate_list);
 }
 
 void ReconstructionPipeline::integrate(const Points& points, const Eigen::Matrix4f& camera_pose) {
@@ -307,8 +238,8 @@ void ReconstructionPipeline::integrate(const Points& points, const Eigen::Matrix
         oneapi::tbb::blocked_range<size_t>(0, updated_list_.size()),
         [&](const oneapi::tbb::blocked_range<size_t>& range) {
             for (size_t id = range.begin(); id != range.end(); ++id) {
-                Eigen::Vector3i blockPos = decode(updated_list_[id], depth_limit_);
-                Voxel* current_voxel_block = allcator_.accessVoxelBlock(updated_list_[id]);
+                Eigen::Vector3i blockPos = decode(updated_list_[id]);
+                Voxel* current_voxel_block = tree_->has_leaf_node(updated_list_[id]);
                 if (!current_voxel_block) continue;
                 for (size_t i = 0; i < coord_offsets_.size(); ++i) {
                     const Eigen::Vector3i& offset = coord_offsets_[i];
@@ -316,7 +247,7 @@ void ReconstructionPipeline::integrate(const Points& points, const Eigen::Matrix
                         offset.x() + offset.y() * EXPANDED_VOXEL_BLOCK_SIZE +
                         offset.z() * EXPANDED_VOXEL_BLOCK_SIZE * EXPANDED_VOXEL_BLOCK_SIZE;
                     Eigen::Vector3f voxel_in_world = blockPos.cast<float>() * VOXEL_BLOCK_SIZE;
-                    voxel_in_world += (offset + Eigen::Vector3i(-1, -1, -1)).cast<float>();
+                    voxel_in_world += (offset.cast<float>() + Eigen::Vector3f(-0.5f, -0.5f, -0.5f));
                     voxel_in_world *= voxel_size_;
                     Eigen::Vector3f voxel_in_camera = r * (voxel_in_world - t);
                     Voxel& current_voxel = current_voxel_block[localId];
@@ -324,12 +255,14 @@ void ReconstructionPipeline::integrate(const Points& points, const Eigen::Matrix
                     Eigen::Vector3f pointImage = k_ * voxel_in_camera;
                     pointImage /= pointImage(2);
 
-                    if (pointImage(0) < 0 || pointImage(0) > float(width_ - 1) ||
-                        pointImage(1) < 0 || pointImage(1) > float(height_ - 1))
+                    if (pointImage(0) < 1 || pointImage(0) > float(width_ - 2) ||
+                        pointImage(1) < 1 || pointImage(1) > float(height_ - 2))
                         continue;
 
-                    const Eigen::Vector3f& point = points[size_t(
-                        (int)(pointImage(0) + 0.5) + (int)(pointImage(1) + 0.5) * width_)];
+                    // const Eigen::Vector3f& point = points[size_t(
+                    //     (int)(pointImage(0) + 0.5) + (int)(pointImage(1) + 0.5) * width_)];
+                    const Eigen::Vector3f point =
+                        interpolateBilinear_withHoles(points, pointImage.head(2), width_);
                     if (std::isnan(point(0))) continue;
                     float eta = point(2) - voxel_in_camera(2);
 
@@ -386,7 +319,9 @@ inline Eigen::Vector3i posToBlockPos(Eigen::Vector3i& point) {
 float ReconstructionPipeline::readFromSDFInterpolated(
     const Eigen::Vector3f& point, const Eigen::Vector3i& blockPos,
     const Voxel* current_voxel_block) {
-    if (!current_voxel_block) return 1.0f;
+    if (!current_voxel_block) {
+        return 1.0f;
+    }
     Eigen::Vector3f coeff;
     Eigen::Vector3i position = IntToFloor(point, coeff);
 
@@ -396,6 +331,7 @@ float ReconstructionPipeline::readFromSDFInterpolated(
     const float cz = coeff(2);
 
     Eigen::Vector3i offset = position - blockPos * VOXEL_BLOCK_SIZE;
+    offset = offset.array().max(0).min(VOXEL_BLOCK_SIZE - 2);
     v1 = readSDFByVoxelBlock(current_voxel_block, offset);
     v2 = readSDFByVoxelBlock(current_voxel_block, offset + Eigen::Vector3i(1, 0, 0));
     res1 = (1.0f - cx) * v1 + cx * v2;
