@@ -2,9 +2,14 @@
 #define SCAN_RECONSTRUCTION_SCENE_H_
 
 #include <Types.h>
+#include <atomic>
 #include <cstdint>
 
 namespace ScanReconstruction {
+struct Node {
+    std::atomic<uint64_t> space_status_map;
+};
+
 class Scene {
 public:
     VoxelBlock* findVoxelBlock(Eigen::Vector3i position) const;

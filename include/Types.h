@@ -113,6 +113,7 @@ struct Timer {
 
 using Normals = std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>;
 using Points = std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>;
+using Image = std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>;
 
 struct IMU {
     Eigen::Vector3d accel;

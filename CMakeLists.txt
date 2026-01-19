@@ -91,31 +91,40 @@ set(all_headers
     /opt/ros/humble/include/tf2_ros /opt/ros/humble/include/tf2_msgs
     /opt/ros/humble/include/sensor_msgs /opt/ros/humble/include/message_filters)
 
-add_executable(visualizer test/test_visualizer.cpp src/Allocator.cpp
-                          src/DepthTracker.cpp)
+add_library(sr_core SHARED src/Pipeline.cpp src/DepthTracker.cpp)
 
-target_compile_definitions(
-  visualizer PRIVATE TBB_PREVIEW_TASK_ARENA_CONSTRAINTS_EXTENSION=1)
-
-set_target_properties(visualizer PROPERTIES CXX_STANDARD 20
-                                            CXX_STANDARD_REQUIRED ON)
-
-target_include_directories(visualizer PUBLIC include ${OpenCV_INCLUDE_DIRS}
-                                             ${all_headers})
-
-target_link_directories(visualizer PUBLIC ${ROS_ROOT_DIR}/lib)
+target_include_directories(sr_core PUBLIC include)
 
 target_link_libraries(
-  visualizer
+  sr_core
   PUBLIC Eigen3::Eigen
          TBB::tbb
          ${OpenCV_LIBS}
-         cv_bridge
-         tf2_ros
-         tf2_msgs__rosidl_typesupport_cpp
-         sensor_msgs__rosidl_typesupport_cpp
-         rclcpp::rclcpp
-         cv_bridge::cv_bridge
-         visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
-         openvino::runtime
-         stdc++fs)
+         IPP::ippcore
+         IPP::ipps
+         IPP::ippi
+         IPP::ippcv)
+
+add_executable(test_hpm test/test_hp_module.cpp)
+target_include_directories(test_hpm PUBLIC include)
+
+target_link_libraries(test_hpm PUBLIC Eigen3::Eigen)
+# add_executable(visualizer test/test_visualizer.cpp src/Allocator.cpp
+# src/DepthTracker.cpp)
+
+# target_compile_definitions( visualizer PRIVATE
+# TBB_PREVIEW_TASK_ARENA_CONSTRAINTS_EXTENSION=1)
+
+# set_target_properties(visualizer PROPERTIES CXX_STANDARD 20
+# CXX_STANDARD_REQUIRED ON)
+
+# target_include_directories(visualizer PUBLIC include ${OpenCV_INCLUDE_DIRS}
+# ${all_headers})
+
+# target_link_directories(visualizer PUBLIC ${ROS_ROOT_DIR}/lib)
+
+# target_link_libraries( visualizer PUBLIC Eigen3::Eigen TBB::tbb ${OpenCV_LIBS}
+# cv_bridge tf2_ros tf2_msgs__rosidl_typesupport_cpp
+# sensor_msgs__rosidl_typesupport_cpp rclcpp::rclcpp cv_bridge::cv_bridge
+# visualization_msgs::visualization_msgs__rosidl_typesupport_cpp
+# openvino::runtime stdc++fs)
